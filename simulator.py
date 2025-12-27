@@ -144,11 +144,15 @@ class Simulator:
             dealer_hand['cards'].append(new_card)
             self.update_count(new_card)
 
-    def perform_split(self, current_hand, active_hands, is_split_ace):
+    def perform_split(self, current_hand, active_hands, is_split_ace, is_free=False):
         # Create new hand
+        new_bet = 0 if is_free else current_hand['bet']
+        new_free_bet = current_hand['bet'] if is_free else 0
+        
         new_hand = {
             'cards': [current_hand['cards'].pop(1)], # Take second card from first hand
-            'bet': current_hand['bet'],
+            'bet': new_bet,
+            'free_bet': new_free_bet,
             'split_group_id': current_hand.get('split_group_id'),
             'is_split_hand': True,
             'from_split_ace': is_split_ace
@@ -260,7 +264,17 @@ class Simulator:
                     current_hand['surrendered'] = True
                     break
                 elif action == 'Split':
-                    self.perform_split(current_hand, active_hands, is_split_ace or (current_hand['cards'][0].rank == 'A'))
+                    is_free_split = False
+                    if self.strategy.variant == 'FreeBet':
+                        # Free Split on all pairs except 10, J, Q, K
+                        # Card value checking
+                        val = current_hand['cards'][0].value
+                        if val != 10:
+                            is_free_split = True
+                            
+                    self.perform_split(current_hand, active_hands, 
+                                       is_split_ace or (current_hand['cards'][0].rank == 'A'),
+                                       is_free=is_free_split)
                     active_hands.insert(0, current_hand) # Re-queue current hand (Hand 1)
                     hand_finished = False # Do not finish yet
                     break
