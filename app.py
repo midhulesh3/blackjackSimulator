@@ -124,6 +124,10 @@ est_rules = {
     'surrender_allowed': surrender_allowed,
     **bet_rules
 }
+if variant == 'FreeBet':
+    est_rules['resplit_aces'] = True
+    est_rules['surrender_allowed'] = False
+    est_rules['dealer_hits_soft_17'] = True
 est_strat_params = {
     'check_deviations': use_deviations,
     'counting_system': counting_system if counting_system != "None" else None,
@@ -161,6 +165,13 @@ if st.button("Run Simulation"):
             'surrender_allowed': surrender_allowed,
             **bet_rules # Merge betting rules
         }
+        
+        # Enforce Free Bet Rules
+        if variant == 'FreeBet':
+            rules['resplit_aces'] = True
+            rules['surrender_allowed'] = False
+            rules['dealer_hits_soft_17'] = True
+            st.info("Free Bet Active: Enforcing H17, Resplit Aces, No Surrender per rules.")
         
         # Setup Strategy
         strat_system = counting_system if counting_system != "None" else None
