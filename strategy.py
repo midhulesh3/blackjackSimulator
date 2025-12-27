@@ -103,7 +103,7 @@ class Strategy:
         else:
             return int(r) - 2
 
-    def get_basic_action(self, hand, dealer_card, can_split=False, can_double=False, can_surrender=False):
+    def get_basic_action(self, hand, dealer_card, can_split=False, can_double=False, can_surrender=False, is_free_hand=False):
         # Basic Strategy Lookup
         dealer_idx = self.get_dealer_index(dealer_card)
         total = hand['total']
@@ -114,14 +114,22 @@ class Strategy:
             rank = hand['cards'][0].rank
             if rank in ['J', 'Q', 'K']: rank = '10' # Normalize 10s
             action = self.pair_strategy.get(rank, ['H']*10)[dealer_idx]
-            if action == 'P': return 'Split'
+            if action == 'P': 
+                # If is_free_hand, avoid Paid Splits? 
+                # Free Bet rules usually cover ALMOST ALL splits as Free. 
+                # If it's a Free Split, get_action already returned 'Split'.
+                # If we are here, it's a PAID SPLIT (e.g. 10s, or maybe 4s).
+                # If is_free_hand, we likely shouldn't Pay to Split.
+                if is_free_hand:
+                    return 'Stand' if total >= 18 else 'Hit' # Heuristic
+                return 'Split'
             
         # Soft Totals
         if soft:
             if total > 21: soft=False
             elif total >= 13 and total <= 21:
                  action_code = self.soft_strategy.get(total, ['S']*10)[dealer_idx]
-                 return self.decode_action(action_code, can_double, can_surrender)
+                 return self.decode_action(action_code, can_double, can_surrender, is_free_hand)
             else:
                  return 'Hit'
         
@@ -130,11 +138,17 @@ class Strategy:
             # clamp min 4
             t = max(4, total)
             action_code = self.hard_strategy.get(t, ['H']*10)[dealer_idx]
-            return self.decode_action(action_code, can_double, can_surrender)
+            return self.decode_action(action_code, can_double, can_surrender, is_free_hand)
         
         return 'Stand' 
 
-    def decode_action(self, code, can_double, can_surrender):
+    def decode_action(self, code, can_double, can_surrender, is_free_hand=False):
+        if is_free_hand:
+             # Restrict Paid Actions (Double, Surrender)
+             # Note: Free Doubles were already handled in get_action before calling this.
+             can_double = False 
+             can_surrender = False
+
         if code == 'H': return 'Hit'
         if code == 'S': return 'Stand'
         if code == 'D': return 'Double' if can_double else 'Hit'
@@ -152,31 +166,61 @@ class Strategy:
         # Basic Strategy never takes insurance
         return False
 
-    def get_action(self, hand, dealer_card, true_count=0, can_split=False, can_double=False, can_surrender=False):
+    def get_action(self, hand, dealer_card, true_count=0, can_split=False, can_double=False, can_surrender=False, is_free_hand=False):
         # Free Bet Logic overrides
         if self.variant == 'FreeBet':
-            # Free Double on Hard 9, 10, 11
+            # Free Double on Hard 9, 10, 11 (ALWAYS take this, even on paid hands? Yes.)
             hard_total = hand['total']
             is_soft = hand['soft']
             if can_double and not is_soft and hard_total in [9, 10, 11]:
                  # Strategy: Always take the free double (it's +EV)
                  return 'Double'
             
-            # Free Split on all pairs except 10s (and 4s?)
-            # Standard Free Bet rules: Free split all pairs except 10-value. 
-            # (Some casinos restrict 4s but usually allow).
+            # Free Split on all pairs except 10s
             if can_split:
                  card_val = hand['cards'][0].value
                  if card_val != 10: # Free split
                      return 'Split'
 
         # Check Deviations first if enabled
+        # Note: Deviations might suggest a Paid Double. 
+        # If is_free_hand, we likely shouldn't take paid deviations either?
+        # Let's assume No Paid Actions for Free Hands generally.
         if self.check_deviations:
             dev_action = self.check_index_plays(hand, dealer_card, true_count, can_split, can_double, can_surrender)
             if dev_action:
-                return dev_action
+                # If Free Hand, forbid Paid Doubles/Splits/Surrender?
+                # Surrender on Free Hand: You get back... 0? 0 risk -> 0 return. 
+                # Actually you can't surrender a Free Hand (it's free).
+                if is_free_hand:
+                    if dev_action in ['Double', 'Split', 'Surrender']:
+                         # Downgrade logic? Or just ignore deviation?
+                         pass # Fallthrough to basic strategy (which we will also restrict)
+                    else:
+                        return dev_action
+                else:
+                    return dev_action
         
-        return self.get_basic_action(hand, dealer_card, can_split, can_double, can_surrender)
+        # Get Basic Action
+        action = self.get_basic_action(hand, dealer_card, can_split, can_double, can_surrender)
+        
+        if is_free_hand and self.variant == 'FreeBet':
+            # Downgrade Paid Doubles/Splits/Surrenders
+            if action == 'Double':
+                 # Determine if D or Ds based on table? 
+                 # `get_basic_action` returns resolved action.
+                 # We need to know if it was D(Hit) or D(Stand).
+                 # Re-lookup or infer?
+                 # Actually, `get_basic_action` resolved it.
+                 # If it was 'Double', it meant 'Double if allowed, else Hit'.
+                 # If it was 'Ds', it meant 'Double if allowed, else Stand'.
+                 # Since we returned 'Double', the engine will Double.
+                 # We want to force Hit/Stand instead.
+                 # We can't differentiate D vs Ds here easily without re-lookup or modification.
+                 # Optimization: Pass is_free_hand to get_basic_action?
+                 pass 
+                 
+        return self.get_basic_action(hand, dealer_card, can_split, can_double, can_surrender, is_free_hand=is_free_hand)
 
     def check_index_plays(self, hand, dealer_card, true_count, can_split, can_double, can_surrender):
         """
