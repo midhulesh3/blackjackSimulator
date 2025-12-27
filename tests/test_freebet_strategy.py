@@ -70,5 +70,27 @@ class TestFreeBetStrategy(unittest.TestCase):
         action_free = strat.get_action(hand_s17, dealer_6, can_double=True, is_free_hand=True)
         self.assertEqual(action_free, 'Hit', "Free Hand should NOT Pay to Double Soft 17 vs 6")
 
+    
+    def test_aggressive_free_hand_strategy(self):
+        # Scenario: Free Hand (Push = Loss). Should Hit Hard 17 vs 7+ to try to win.
+        strat = Strategy(variant='FreeBet')
+        
+        # Hard 17 vs 10
+        hand_h17 = {'total': 17, 'soft': False, 'is_pair': False}
+        dealer_10 = Card('10', 'C')
+        
+        # Paid Hand: Stand (Standard)
+        action_paid = strat.get_action(hand_h17, dealer_10, is_free_hand=False)
+        self.assertEqual(action_paid, 'Stand', "Paid 17 vs 10 should Stand")
+        
+        # Free Hand: Hit (Aggressive)
+        action_free = strat.get_action(hand_h17, dealer_10, is_free_hand=True)
+        self.assertEqual(action_free, 'Hit', "Free Hand 17 vs 10 should Hit (Aggressive)")
+        
+        # Hard 17 vs 6: Still Stand? (Dealer bust likely)
+        dealer_6 = Card('6', 'D')
+        action_free_low = strat.get_action(hand_h17, dealer_6, is_free_hand=True)
+        self.assertEqual(action_free_low, 'Stand', "Free Hand 17 vs 6 should still Stand")
+
 if __name__ == '__main__':
     unittest.main()

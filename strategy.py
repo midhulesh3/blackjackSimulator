@@ -16,6 +16,10 @@ class Strategy:
              self.hard_strategy = self.load_strategy_csv('strategies/freebet_hard.csv', index_col=0, dtype_idx=int)
              self.soft_strategy = self.load_strategy_csv('strategies/freebet_soft.csv', index_col=0, dtype_idx=int)
              self.pair_strategy = self.load_strategy_csv('strategies/freebet_pair.csv', index_col=0, dtype_idx=str)
+             
+             # Free Hand Specials (Aggressive)
+             self.freehand_hard = self.load_strategy_csv('strategies/freebet_freehand_hard.csv', index_col=0, dtype_idx=int)
+             self.freehand_soft = self.load_strategy_csv('strategies/freebet_freehand_soft.csv', index_col=0, dtype_idx=int)
         else:
             # Load Standard Strategies
             try:
@@ -128,7 +132,12 @@ class Strategy:
         if soft:
             if total > 21: soft=False
             elif total >= 13 and total <= 21:
-                 action_code = self.soft_strategy.get(total, ['S']*10)[dealer_idx]
+                 # Aggressive Free Hand Table Check
+                 if is_free_hand and hasattr(self, 'freehand_soft'):
+                     action_code = self.freehand_soft.get(total, ['S']*10)[dealer_idx]
+                 else:
+                     action_code = self.soft_strategy.get(total, ['S']*10)[dealer_idx]
+                     
                  return self.decode_action(action_code, can_double, can_surrender, is_free_hand)
             else:
                  return 'Hit'
@@ -137,7 +146,11 @@ class Strategy:
         if total <= 21:
             # clamp min 4
             t = max(4, total)
-            action_code = self.hard_strategy.get(t, ['H']*10)[dealer_idx]
+            if is_free_hand and hasattr(self, 'freehand_hard'):
+                action_code = self.freehand_hard.get(t, ['H']*10)[dealer_idx]
+            else:
+                action_code = self.hard_strategy.get(t, ['H']*10)[dealer_idx]
+                
             return self.decode_action(action_code, can_double, can_surrender, is_free_hand)
         
         return 'Stand' 
