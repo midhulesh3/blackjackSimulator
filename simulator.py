@@ -233,8 +233,12 @@ class Simulator:
                                  not current_hand.get('is_split_hand') and 
                                  self.rules.get('surrender_allowed', False))
                 
+                
                 tc = self.true_count
-                action = self.strategy.get_action(current_hand, dealer_up_card, tc, can_split, can_double, can_surrender)
+                is_free_hand = (current_hand['bet'] == 0 and current_hand.get('free_bet', 0) > 0)
+                action = self.strategy.get_action(current_hand, dealer_up_card, tc, 
+                                                can_split, can_double, can_surrender,
+                                                is_free_hand=is_free_hand)
                 
                 if action == 'Hit':
                     new_card = self.deck.deal()
