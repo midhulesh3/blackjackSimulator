@@ -11,23 +11,27 @@ class Strategy:
         
         # Determine suffixes
         suffix = "_h17" if dealer_hits_soft_17 else ""
-        
-        # Load Strategies from CSV
-        # Try specific H17 file, else fallback to standard
-        try:
-            self.hard_strategy = self.load_strategy_csv(f'strategies/hard{suffix}.csv', index_col=0, dtype_idx=int)
-            if not self.hard_strategy: raise FileNotFoundError 
-        except:
-             self.hard_strategy = self.load_strategy_csv('strategies/hard.csv', index_col=0, dtype_idx=int)
-             
-        try:
-            self.soft_strategy = self.load_strategy_csv(f'strategies/soft{suffix}.csv', index_col=0, dtype_idx=int)
-            if not self.soft_strategy: 
+        if self.variant == 'FreeBet':
+             # Use specific FreeBet files
+             self.hard_strategy = self.load_strategy_csv('strategies/freebet_hard.csv', index_col=0, dtype_idx=int)
+             self.soft_strategy = self.load_strategy_csv('strategies/freebet_soft.csv', index_col=0, dtype_idx=int)
+             self.pair_strategy = self.load_strategy_csv('strategies/freebet_pair.csv', index_col=0, dtype_idx=str)
+        else:
+            # Load Standard Strategies
+            try:
+                self.hard_strategy = self.load_strategy_csv(f'strategies/hard{suffix}.csv', index_col=0, dtype_idx=int)
+                if not self.hard_strategy: raise FileNotFoundError 
+            except:
+                 self.hard_strategy = self.load_strategy_csv('strategies/hard.csv', index_col=0, dtype_idx=int)
+                 
+            try:
+                self.soft_strategy = self.load_strategy_csv(f'strategies/soft{suffix}.csv', index_col=0, dtype_idx=int)
+                if not self.soft_strategy: 
+                     self.soft_strategy = self.load_strategy_csv('strategies/soft.csv', index_col=0, dtype_idx=int)
+            except:
                  self.soft_strategy = self.load_strategy_csv('strategies/soft.csv', index_col=0, dtype_idx=int)
-        except:
-             self.soft_strategy = self.load_strategy_csv('strategies/soft.csv', index_col=0, dtype_idx=int)
-
-        self.pair_strategy = self.load_strategy_csv('strategies/pair.csv', index_col=0, dtype_idx=str)
+    
+            self.pair_strategy = self.load_strategy_csv('strategies/pair.csv', index_col=0, dtype_idx=str)
         
     def load_strategy_csv(self, filepath, index_col, dtype_idx):
         try:
