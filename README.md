@@ -48,6 +48,7 @@ Execute the full test suite for regression testing:
 ```bash
 python3 -m unittest discover tests
 ```
+*Note: A git pre-push hook is installed to automatically run these tests before any push.*
 
 ## Structure
 - `simulator.py`: Core game engine (refactored).
