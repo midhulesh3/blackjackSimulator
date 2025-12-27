@@ -344,6 +344,19 @@ class Simulator:
         # 1. Bet
         bet = self.calculate_bet()
         
+        # Stop on Ruin Protection: Cap bet at current bankroll
+        if self.rules.get('stop_on_ruin', False):
+             if self.current_bankroll <= 0:
+                 return # Should adhere to loop check, but redundancy is safe
+             if bet > self.current_bankroll:
+                 bet = int(self.current_bankroll) # All-in logic
+                 
+             # If bankroll is effectively 0 (e.g. < 1), we might just bet remaining?
+             # Logic above handles it.
+             # If bet becomes 0?
+             if bet <= 0:
+                 return # Cannot play with 0
+        
         # 2. Deal
         player_hand = {'cards': [self.deck.deal(), self.deck.deal()], 'bet': bet, 'split_group_id': self.hands_played}
         dealer_hand = {'cards': [self.deck.deal(), self.deck.deal()]}
