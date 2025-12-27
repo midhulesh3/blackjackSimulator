@@ -43,11 +43,38 @@ st.sidebar.header("Game Rules")
 variant = st.sidebar.selectbox("Game Variant", ["Standard", "FreeBet"])
 num_decks = st.sidebar.selectbox("Number of Decks", [1, 2, 4, 6, 8], index=3)
 penetration = st.sidebar.slider("Deck Penetration", 0.5, 0.95, 0.75, 0.05)
-dealer_s17 = st.sidebar.radio("Dealer Soft 17", ["Stand", "Hit"], index=0)
-das = st.sidebar.checkbox("Double After Split (DAS)", value=True)
-resplit_aces = st.sidebar.checkbox("Resplit Aces (RSA)", value=False)
-hit_split_aces = st.sidebar.checkbox("Hit Split Aces (HSA)", value=False)
-surrender_allowed = st.sidebar.checkbox("Allow Late Surrender", value=True)
+dealer_s17 = "Hit" # Default for FreeBet
+das = True
+resplit_aces = True
+hit_split_aces = False 
+surrender_allowed = False
+
+if variant == "Standard":
+    dealer_s17 = st.sidebar.radio("Dealer Soft 17", ["Stand", "Hit"], index=0)
+    das = st.sidebar.checkbox("Double After Split (DAS)", value=True)
+    resplit_aces = st.sidebar.checkbox("Resplit Aces (RSA)", value=False)
+    hit_split_aces = st.sidebar.checkbox("Hit Split Aces (HSA)", value=False)
+    surrender_allowed = st.sidebar.checkbox("Allow Late Surrender", value=True)
+else:
+    # FreeBet Fixed Rules
+    st.sidebar.markdown("""
+    **Enforced Rules:**
+    - Dealer Hits Soft 17
+    - Resplit Aces Allowed
+    - No Surrender
+    - Free Doubles (9-11)
+    - Free Splits (pairs excl 10s)
+    - Push 22
+    """)
+    # Set values for simulation
+    dealer_s17 = "Hit"
+    das = True # Usually allowed in Free Bet? Yes.
+    resplit_aces = True
+    surrender_allowed = False
+    # Hit Split Aces usually No?
+    hit_split_aces = st.sidebar.checkbox("Hit Split Aces (HSA)", value=False) # Optional? Usually No.
+    das = st.sidebar.checkbox("Double After Split (DAS)", value=True) # Optional?
+
 
 # ... Strategy & Betting ...
 st.sidebar.header("Strategy & Counting")
@@ -165,13 +192,6 @@ if st.button("Run Simulation"):
             'surrender_allowed': surrender_allowed,
             **bet_rules # Merge betting rules
         }
-        
-        # Enforce Free Bet Rules
-        if variant == 'FreeBet':
-            rules['resplit_aces'] = True
-            rules['surrender_allowed'] = False
-            rules['dealer_hits_soft_17'] = True
-            st.info("Free Bet Active: Enforcing H17, Resplit Aces, No Surrender per rules.")
         
         # Setup Strategy
         strat_system = counting_system if counting_system != "None" else None
