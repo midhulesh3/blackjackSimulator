@@ -90,6 +90,12 @@ class Simulator:
     def handle_insurance(self, dealer_hand, bet):
         insurance_pnl = 0
         if dealer_hand['cards'][0].rank == 'A' and self.rules.get('insurance_allowed', True):
+            # Check funds for insurance
+            if self.rules.get('stop_on_ruin', False):
+                 # Committed is just the main bet right now (no splits yet)
+                 if (self.current_bankroll - bet) < (bet * 0.5):
+                     return 0 # Cannot afford insurance
+            
             tc = self.true_count
             if self.strategy.should_take_insurance(tc):
                 ins_bet = bet * 0.5
@@ -215,6 +221,14 @@ class Simulator:
                 if hand_info['total'] > 21:
                     break # Bust
                 
+                # Calculate committed funds to verify Double/Split affordability
+                committed_funds = current_hand['bet']
+                for h in active_hands: committed_funds += h['bet']
+                for h in finished_hands: committed_funds += h['bet']
+                
+                available_funds = self.current_bankroll - committed_funds
+                stop_ruin = self.rules.get('stop_on_ruin', False)
+                
                 # Check options
                 can_split = (hand_info['is_pair'] and len(current_hand['cards']) == 2)
                 if can_split:
@@ -222,12 +236,21 @@ class Simulator:
                          can_split = False
                      if self.rules.get('max_hands', 4) <= (len(finished_hands) + len(active_hands) + 1):
                          can_split = False
+                     # Stop on Ruin Check for Split
+                     if stop_ruin:
+                         # Split requires equal bet
+                         if available_funds < current_hand['bet']:
+                             can_split = False
                 
                 can_double = (len(current_hand['cards']) == 2)
                 if current_hand.get('is_split_hand') and not self.rules.get('das', True):
                     can_double = False
                 if is_split_ace and not self.rules.get('hit_split_aces', False):
                      can_double = False
+                # Stop on Ruin Check for Double
+                if stop_ruin and can_double:
+                    if available_funds < current_hand['bet']:
+                        can_double = False
                      
                 can_surrender = (len(current_hand['cards']) == 2 and 
                                  not current_hand.get('is_split_hand') and 
