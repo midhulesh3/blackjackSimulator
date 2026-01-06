@@ -388,6 +388,21 @@ st.header("Strategy Editor")
 with st.expander("View / Edit Strategy Tables", expanded=False):
     st.caption("Edit the tables below. Changes apply to the next simulation.")
     
+    # Legend
+    with st.expander("ℹ️ Action Codes Legend"):
+        st.markdown("""
+        | Code | Action | Description |
+        |---|---|---|
+        | **H** | Hit | Take another card. |
+        | **S** | Stand | End turn. |
+        | **D** | Double / Hit | Double if allowed, otherwise Hit. |
+        | **Ds** | Double / Stand | Double if allowed, otherwise Stand. |
+        | **Dh** | Double / Hit | Same as D. |
+        | **P** | Split | Split the pair. |
+        | **Rh** | Surrender / Hit | Surrender if allowed, otherwise Hit. |
+        | **Rs** | Surrender / Stand | Surrender if allowed, otherwise Stand. |
+        """)
+    
     # State Management for Strategy
     # Detect context change to reset defaults
     ctx_key = f"{variant}_{dealer_s17}"
