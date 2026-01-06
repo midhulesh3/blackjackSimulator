@@ -1,7 +1,7 @@
 import pandas as pd
 
 class Strategy:
-    def __init__(self, check_deviations=False, counting_system=None, counting_params=None, variant='Standard', dealer_hits_soft_17=False, surrender_allowed=False):
+    def __init__(self, check_deviations=False, counting_system=None, counting_params=None, variant='Standard', dealer_hits_soft_17=False, surrender_allowed=False, custom_tables=None):
         self.check_deviations = check_deviations
         self.counting_system = counting_system # 'Hi-Lo', 'KO', 'Custom'
         self.counting_params = counting_params or {} # Dictionary for custom values
@@ -9,33 +9,48 @@ class Strategy:
         self.dealer_hits_soft_17 = dealer_hits_soft_17
         self.surrender_allowed = surrender_allowed
         
-        # Determine suffixes
-        suffix = "_h17" if dealer_hits_soft_17 else ""
-        if self.variant == 'FreeBet':
-             # Use specific FreeBet files
-             self.hard_strategy = self.load_strategy_csv('strategies/freebet_hard.csv', index_col=0, dtype_idx=int)
-             self.soft_strategy = self.load_strategy_csv('strategies/freebet_soft.csv', index_col=0, dtype_idx=int)
-             self.pair_strategy = self.load_strategy_csv('strategies/freebet_pair.csv', index_col=0, dtype_idx=str)
-             
-             # Free Hand Specials (Aggressive)
-             self.freehand_hard = self.load_strategy_csv('strategies/freebet_freehand_hard.csv', index_col=0, dtype_idx=int)
-             self.freehand_soft = self.load_strategy_csv('strategies/freebet_freehand_soft.csv', index_col=0, dtype_idx=int)
+        self.hard_strategy = {}
+        self.soft_strategy = {}
+        self.pair_strategy = {}
+        
+        if custom_tables:
+            # Use provided custom tables
+            self.hard_strategy = custom_tables.get('hard', {})
+            self.soft_strategy = custom_tables.get('soft', {})
+            self.pair_strategy = custom_tables.get('pair', {})
+            # Support aggressive freehand overrides if provided
+            if 'freehand_hard' in custom_tables:
+                self.freehand_hard = custom_tables['freehand_hard']
+            if 'freehand_soft' in custom_tables:
+                self.freehand_soft = custom_tables['freehand_soft']
         else:
-            # Load Standard Strategies
-            try:
-                self.hard_strategy = self.load_strategy_csv(f'strategies/hard{suffix}.csv', index_col=0, dtype_idx=int)
-                if not self.hard_strategy: raise FileNotFoundError 
-            except:
-                 self.hard_strategy = self.load_strategy_csv('strategies/hard.csv', index_col=0, dtype_idx=int)
+            # Determine suffixes
+            suffix = "_h17" if dealer_hits_soft_17 else ""
+            if self.variant == 'FreeBet':
+                 # Use specific FreeBet files
+                 self.hard_strategy = self.load_strategy_csv('strategies/freebet_hard.csv', index_col=0, dtype_idx=int)
+                 self.soft_strategy = self.load_strategy_csv('strategies/freebet_soft.csv', index_col=0, dtype_idx=int)
+                 self.pair_strategy = self.load_strategy_csv('strategies/freebet_pair.csv', index_col=0, dtype_idx=str)
                  
-            try:
-                self.soft_strategy = self.load_strategy_csv(f'strategies/soft{suffix}.csv', index_col=0, dtype_idx=int)
-                if not self.soft_strategy: 
+                 # Free Hand Specials (Aggressive)
+                 self.freehand_hard = self.load_strategy_csv('strategies/freebet_freehand_hard.csv', index_col=0, dtype_idx=int)
+                 self.freehand_soft = self.load_strategy_csv('strategies/freebet_freehand_soft.csv', index_col=0, dtype_idx=int)
+            else:
+                # Load Standard Strategies
+                try:
+                    self.hard_strategy = self.load_strategy_csv(f'strategies/hard{suffix}.csv', index_col=0, dtype_idx=int)
+                    if not self.hard_strategy: raise FileNotFoundError 
+                except:
+                     self.hard_strategy = self.load_strategy_csv('strategies/hard.csv', index_col=0, dtype_idx=int)
+                     
+                try:
+                    self.soft_strategy = self.load_strategy_csv(f'strategies/soft{suffix}.csv', index_col=0, dtype_idx=int)
+                    if not self.soft_strategy: 
+                         self.soft_strategy = self.load_strategy_csv('strategies/soft.csv', index_col=0, dtype_idx=int)
+                except:
                      self.soft_strategy = self.load_strategy_csv('strategies/soft.csv', index_col=0, dtype_idx=int)
-            except:
-                 self.soft_strategy = self.load_strategy_csv('strategies/soft.csv', index_col=0, dtype_idx=int)
-    
-            self.pair_strategy = self.load_strategy_csv('strategies/pair.csv', index_col=0, dtype_idx=str)
+        
+                self.pair_strategy = self.load_strategy_csv('strategies/pair.csv', index_col=0, dtype_idx=str)
         
     def load_strategy_csv(self, filepath, index_col, dtype_idx):
         try:

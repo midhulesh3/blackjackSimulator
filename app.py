@@ -140,6 +140,30 @@ def measure_speed(_rules, _strategy_params):
     if elapsed == 0: return 100000 # Prevent div zero
     return sample_size / elapsed # Hands per second
 
+# Strategy Helpers
+def strategy_to_df(strat_dict, index_dtype=int):
+    cols = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'A']
+    # Filter keys if needed? strat_dict might have other keys? 
+    # Usually clean. 
+    df = pd.DataFrame.from_dict(strat_dict, orient='index', columns=cols)
+    if index_dtype == int:
+        df.index = df.index.astype(int)
+        df = df.sort_index(ascending=False)
+    else:
+        # Sort pairs: A, 10 ... 2
+        sort_order = ['A', '10', '9', '8', '7', '6', '5', '4', '3', '2']
+        # Filter only valid keys
+        df = df[df.index.isin(sort_order)]
+        df = df.reindex(sort_order)
+    return df
+
+def df_to_strategy(df, index_dtype=int):
+    strat_dict = {}
+    for idx, row in df.iterrows():
+        key = int(idx) if index_dtype == int else str(idx)
+        strat_dict[key] = row.tolist()
+    return strat_dict
+
 # ... Sidebar Setup ...
 
 # Prepare estimation params (lightweight)
@@ -193,12 +217,17 @@ if st.button("Run Simulation"):
             **bet_rules # Merge betting rules
         }
         
+        # Prepare Custom Strategy if edited
+        custom_tables = None
+        if 'hard_df' in st.session_state:
+             custom_tables = {
+                 'hard': df_to_strategy(st.session_state['hard_df'], int),
+                 'soft': df_to_strategy(st.session_state['soft_df'], int),
+                 'pair': df_to_strategy(st.session_state['pair_df'], str)
+             }
+        
         # Setup Strategy
         strat_system = counting_system if counting_system != "None" else None
-        strategy = Strategy(check_deviations=use_deviations, 
-                            counting_system=strat_system,
-                            counting_params=custom_counts,
-                            variant=variant)
         
         if sim_mode == "Single Session":
             # Run Sim
@@ -209,7 +238,8 @@ if st.button("Run Simulation"):
                 counting_params=custom_counts, 
                 variant=variant,
                 dealer_hits_soft_17=rules['dealer_hits_soft_17'],
-                surrender_allowed=rules.get('surrender_allowed', False)
+                surrender_allowed=rules.get('surrender_allowed', False),
+                custom_tables=custom_tables
             )
             sim = Simulator(rules, strategy, num_simulations=num_simulations)
             stats = sim.run()
@@ -280,7 +310,8 @@ if st.button("Run Simulation"):
                 'check_deviations': use_deviations,
                 'counting_system': counting_system if counting_system != "None" else None,
                 'counting_params': custom_counts,
-                'variant': variant
+                'variant': variant,
+                'custom_tables': custom_tables
             }
             
             # Use Parallel Processing with Graceful Cancellation
@@ -352,59 +383,61 @@ if st.button("Run Simulation"):
             c2.write(f"**Worst Session**: ${np.min(s_pnls):.2f}")
             c2.write(f"**Std Dev**: ${std_pnl:.2f}")
 
-# Strategy Viewer (Always visible or in expander?)
-with st.expander("View Strategy Tables"):
-    st.subheader(f"{variant} Strategy Tables")
-    if use_deviations:
-        st.markdown("**Deviations Active:** Illustrious 18")
+# Strategy Editor
+st.header("Strategy Editor")
+with st.expander("View / Edit Strategy Tables", expanded=False):
+    st.caption("Edit the tables below. Changes apply to the next simulation.")
     
-    # We need to instantiate a strategy to get the tables
-    # Just reuse logic or instantiate new one
-    strat_view = Strategy(
-        check_deviations=use_deviations, 
-        variant=variant,
-        dealer_hits_soft_17=(dealer_s17 == "Hit"),
-        surrender_allowed=surrender_allowed
-    )
+    # State Management for Strategy
+    # Detect context change to reset defaults
+    ctx_key = f"{variant}_{dealer_s17}"
+    if 'strat_ctx' not in st.session_state or st.session_state['strat_ctx'] != ctx_key:
+        st.session_state['strat_ctx'] = ctx_key
+        # Load defaults
+        default_strat = Strategy(
+            check_deviations=use_deviations, 
+            variant=variant,
+            dealer_hits_soft_17=(dealer_s17 == "Hit"),
+            surrender_allowed=surrender_allowed
+        )
+        st.session_state['hard_df'] = strategy_to_df(default_strat.hard_strategy, int)
+        st.session_state['soft_df'] = strategy_to_df(default_strat.soft_strategy, int)
+        st.session_state['pair_df'] = strategy_to_df(default_strat.pair_strategy, str)
     
-    # 1. Hard Totals
-    st.caption("Hard Totals")
-    # Convert dict to DF for display
-    # Keys: Player Total. Values: List of actions for Dealer 2-A
-    # Dealer columns: 2 3 4 5 6 7 8 9 10 A
-    cols = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'A']
-    hard_data = {k: v for k, v in strat_view.hard_strategy.items() if k >= 8} # Show 8+ usually
-    df_hard = pd.DataFrame.from_dict(hard_data, orient='index', columns=cols)
-    df_hard = df_hard.sort_index(ascending=False)
-    st.dataframe(df_hard.style.background_gradient(cmap="RdYlGn", axis=None)) # Simple color map, not perfect for Action codes
-    # Better styling: Map codes to colors.
-    # H=Green, S=Red, D=Blue, P=Yellow?
-    # Streamlit styler applymap
-    def color_action(val):
-        if 'H' in val: return 'color: green'
-        if 'S' in val: return 'color: red'
-        if 'D' in val: return 'color: blue'
-        if 'P' in val: return 'color: orange'
-        return ''
-    # st.dataframe(df_hard.style.applymap(color_action)) # applymap deprecated in pandas 2.1+? Uses map now. Check version.
+    # Reset Button
+    col_r, col_d, col_u = st.columns([1, 1, 2])
+    if col_r.button("Reset to Defaults"):
+        del st.session_state['strat_ctx'] # Force reload
+        st.rerun()
+        
+    # Download
+    current_custom_strat = {
+        'hard': df_to_strategy(st.session_state['hard_df'], int),
+        'soft': df_to_strategy(st.session_state['soft_df'], int),
+        'pair': df_to_strategy(st.session_state['pair_df'], str)
+    }
+    json_str = json.dumps(current_custom_strat, indent=2)
+    col_d.download_button("Download Strategy", json_str, file_name="custom_strategy.json", mime="application/json")
     
-    # 2. Soft Totals
-    st.caption("Soft Totals")
-    soft_data = strat_view.soft_strategy
-    df_soft = pd.DataFrame.from_dict(soft_data, orient='index', columns=cols)
-    df_soft.index = ["A," + str(i-11) if i<22 else str(i) for i in df_soft.index] # Rename index to A,2 etc?
-    # Actually index is Soft Total. 13 = A,2.
-    df_soft = df_soft.sort_index(ascending=False)
-    st.dataframe(df_soft)
+    # Upload
+    uploaded_file = col_u.file_uploader("Load Strategy (JSON)", type=['json'], label_visibility='collapsed')
+    if uploaded_file is not None:
+        try:
+            loaded_data = json.load(uploaded_file)
+            st.session_state['hard_df'] = strategy_to_df(loaded_data.get('hard', {}), int)
+            st.session_state['soft_df'] = strategy_to_df(loaded_data.get('soft', {}), int)
+            st.session_state['pair_df'] = strategy_to_df(loaded_data.get('pair', {}), str)
+            st.success("Strategy Loaded!")
+        except Exception as e:
+            st.error(f"Error loading file: {e}")
+
+    # Editors
+    st.subheader("Hard Totals")
+    st.session_state['hard_df'] = st.data_editor(st.session_state['hard_df'], use_container_width=True, height=400)
     
-    # 3. Pairs
-    st.caption("Pairs")
-    pair_data = strat_view.pair_strategy
-    df_pair = pd.DataFrame.from_dict(pair_data, orient='index', columns=cols)
-    # Sort index?
-    # Index are strings '2', '3'... '10', 'A'.
-    # Custom sort order
-    sort_order = ['A', '10', '9', '8', '7', '6', '5', '4', '3', '2']
-    df_pair = df_pair.reindex(sort_order)
-    st.dataframe(df_pair)
-    st.dataframe(df_pair)
+    st.subheader("Soft Totals")
+    st.session_state['soft_df'] = st.data_editor(st.session_state['soft_df'], use_container_width=True)
+    
+    st.subheader("Pairs")
+    st.session_state['pair_df'] = st.data_editor(st.session_state['pair_df'], use_container_width=True)
+
