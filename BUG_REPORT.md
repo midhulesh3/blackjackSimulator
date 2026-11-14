@@ -96,7 +96,7 @@ worth +0.0007%, and the earlier S17/H17 cell fixes (#11) are worth +0.009% / +0.
 ### Where the EV "discrepancy" came from
 
 The `test_system_ev` numbers (e.g. −0.28% / −0.93% at 50k hands, −0.447% at 5M) are **mostly sampling
-noise**. One hand has a standard deviation of about 1.15 bets, so 50k hands give ±0.16% (1σ) and 5M give ±0.05%.
+noise**. One hand has a standard deviation of about 1.15 bets, so 50k hands give ±0.51% (1σ; measured over 200 runs: 0.48% S17, 0.53% H17) and 5M give ±0.05%. Across 400 independent 50k-hand runs the results split 50/50 around their mean. There is also a small real one-directional offset of about 0.01–0.015% vs the −0.35%/−0.55% benchmarks (cut-card effect), so about 54% of runs land on the worse side.
 
 Measured with 280M simulated hands (pre-#19–#22 tables, 6D, DAS, LS, no RSA, flat bet):
 
