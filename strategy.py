@@ -5,13 +5,14 @@ import pandas as pd
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 class Strategy:
-    def __init__(self, check_deviations=False, counting_system=None, counting_params=None, variant='Standard', dealer_hits_soft_17=False, surrender_allowed=False, custom_tables=None):
+    def __init__(self, check_deviations=False, counting_system=None, counting_params=None, variant='Standard', dealer_hits_soft_17=False, surrender_allowed=False, custom_tables=None, das=True):
         self.check_deviations = check_deviations
         self.counting_system = counting_system # 'Hi-Lo', 'KO', 'Custom'
         self.counting_params = counting_params or {} # Dictionary for custom values
         self.variant = variant # 'Standard' or 'FreeBet'
         self.dealer_hits_soft_17 = dealer_hits_soft_17
         self.surrender_allowed = surrender_allowed
+        self.das = das
         
         self.hard_strategy = {}
         self.soft_strategy = {}
@@ -61,8 +62,25 @@ class Strategy:
                 except:
                      self.soft_strategy = self.load_strategy_csv('strategies/soft.csv', index_col=0, dtype_idx=int)
         
-                self.pair_strategy = self.load_strategy_csv('strategies/pair.csv', index_col=0, dtype_idx=str)
+                # H17 differs only in 8,8 vs A (surrender, 'Rp')
+                self.pair_strategy = (self.load_strategy_csv(f'strategies/pair{suffix}.csv', index_col=0, dtype_idx=str)
+                                      or self.load_strategy_csv('strategies/pair.csv', index_col=0, dtype_idx=str))
+                if not das:
+                    self.apply_no_das_pairs()
         
+    # Published no-DAS pair strategy (4-8 decks): split 2,2/3,3 only vs 4-7,
+    # never split 4,4, split 6,6 only vs 3-6. Columns: 2,3,4,5,6,7,8,9,10,A.
+    NO_DAS_PAIRS = {
+        '2': ['H', 'H', 'P', 'P', 'P', 'P', 'H', 'H', 'H', 'H'],
+        '3': ['H', 'H', 'P', 'P', 'P', 'P', 'H', 'H', 'H', 'H'],
+        '4': ['H'] * 10,
+        '6': ['H', 'P', 'P', 'P', 'P', 'H', 'H', 'H', 'H', 'H'],
+    }
+
+    def apply_no_das_pairs(self):
+        for rank, row in self.NO_DAS_PAIRS.items():
+            self.pair_strategy[rank] = list(row)
+
     def load_strategy_csv(self, filepath, index_col, dtype_idx):
         # Resolve relative paths against the package dir so loading works from any CWD
         if not os.path.isabs(filepath) and not os.path.exists(filepath):
@@ -147,6 +165,11 @@ class Strategy:
             rank = hand['cards'][0].rank
             if rank in ['J', 'Q', 'K']: rank = '10' # Normalize 10s
             action = self.pair_strategy.get(rank, ['H']*10)[dealer_idx]
+            if action == 'Rp':
+                # Surrender if allowed, otherwise split (H17: 8,8 vs A)
+                if can_surrender and self.surrender_allowed and not is_free_hand:
+                    return 'Surrender'
+                action = 'P'
             if action == 'P': 
                 # If is_free_hand, avoid Paid Splits? 
                 # Free Bet rules usually cover ALMOST ALL splits as Free. 

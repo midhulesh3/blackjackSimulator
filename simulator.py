@@ -556,7 +556,8 @@ def run_single_session_batch(rules, strategy_params, num_simulations):
         variant=strategy_params.get('variant', 'Standard'),
         dealer_hits_soft_17=rules.get('dealer_hits_soft_17', False),
         surrender_allowed=rules.get('surrender_allowed', False),
-        custom_tables=strategy_params.get('custom_tables', None)
+        custom_tables=strategy_params.get('custom_tables', None),
+        das=rules.get('das', True)
     )
     
     sim = Simulator(rules, strategy, num_simulations=num_simulations)

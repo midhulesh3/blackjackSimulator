@@ -124,7 +124,8 @@ def measure_speed(rules, strategy_params):
         counting_params=strategy_params.get('counting_params', {}),
         variant=strategy_params.get('variant', 'Standard'),
         dealer_hits_soft_17=rules.get('dealer_hits_soft_17', False),
-        surrender_allowed=rules.get('surrender_allowed', False)
+        surrender_allowed=rules.get('surrender_allowed', False),
+        das=rules.get('das', True)
     )
     sim = Simulator(rules, strat, num_simulations=sample_size)
     sim.run()
@@ -239,7 +240,8 @@ if st.button("Run Simulation"):
                 variant=variant,
                 dealer_hits_soft_17=rules['dealer_hits_soft_17'],
                 surrender_allowed=rules.get('surrender_allowed', False),
-                custom_tables=custom_tables
+                custom_tables=custom_tables,
+                das=das
             )
             sim = Simulator(rules, strategy, num_simulations=num_simulations)
             stats = sim.run()
@@ -403,11 +405,12 @@ with st.expander("View / Edit Strategy Tables", expanded=False):
         | **P** | Split | Split the pair. |
         | **Rh** | Surrender / Hit | Surrender if allowed, otherwise Hit. |
         | **Rs** | Surrender / Stand | Surrender if allowed, otherwise Stand. |
+        | **Rp** | Surrender / Split | Pairs only: surrender if allowed, otherwise Split. |
         """)
     
     # State Management for Strategy
     # Detect context change to reset defaults
-    ctx_key = f"{variant}_{dealer_s17}"
+    ctx_key = f"{variant}_{dealer_s17}_{das}"
     if 'strat_ctx' not in st.session_state or st.session_state['strat_ctx'] != ctx_key:
         st.session_state['strat_ctx'] = ctx_key
         # Load defaults
@@ -415,7 +418,8 @@ with st.expander("View / Edit Strategy Tables", expanded=False):
             check_deviations=use_deviations, 
             variant=variant,
             dealer_hits_soft_17=(dealer_s17 == "Hit"),
-            surrender_allowed=surrender_allowed
+            surrender_allowed=surrender_allowed,
+            das=das
         )
         set_strategy_tables(strategy_to_df(default_strat.hard_strategy, int),
                             strategy_to_df(default_strat.soft_strategy, int),

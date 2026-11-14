@@ -144,5 +144,33 @@ class TestStrategyBugfixes(unittest.TestCase):
         self.assertTrue(s.freehand_soft)
 
 
+    def test_h17_pair_eights_vs_ace_surrenders(self):
+        h17 = Strategy(dealer_hits_soft_17=True, surrender_allowed=True)
+        self.assertEqual(h17.get_action(hand('8', '8'), Card('A', 'S'), can_split=True, can_surrender=True), 'Surrender')
+        # Without surrender available (e.g. after a split) it still splits
+        self.assertEqual(h17.get_action(hand('8', '8'), Card('A', 'S'), can_split=True), 'Split')
+        # S17 always splits
+        s17 = Strategy(surrender_allowed=True)
+        self.assertEqual(s17.get_action(hand('8', '8'), Card('A', 'S'), can_split=True, can_surrender=True), 'Split')
+
+    def test_no_das_pair_strategy(self):
+        nodas = Strategy(das=False)
+        das = Strategy()
+        self.assertEqual(das.get_action(hand('4', '4'), Card('5', 'S'), can_split=True, can_double=True), 'Split')
+        self.assertEqual(nodas.get_action(hand('4', '4'), Card('5', 'S'), can_split=True, can_double=True), 'Hit')  # hard 8
+        self.assertEqual(das.get_action(hand('2', '2'), Card('2', 'S'), can_split=True), 'Split')
+        self.assertEqual(nodas.get_action(hand('2', '2'), Card('2', 'S'), can_split=True), 'Hit')
+        self.assertEqual(nodas.get_action(hand('6', '6'), Card('2', 'S'), can_split=True), 'Hit')
+        self.assertEqual(nodas.get_action(hand('6', '6'), Card('3', 'S'), can_split=True), 'Split')
+
+    def test_freebet_tables_match_derived_strategy(self):
+        fb = Strategy(variant='FreeBet', dealer_hits_soft_17=True)
+        # Paid hand: 3-card soft 18 vs 5 can't double -> Stand (was 'D' -> Hit)
+        self.assertEqual(fb.get_action(hand('A', '3', '4'), Card('5', 'S')), 'Stand')
+        self.assertEqual(fb.get_action(hand('10', '3'), Card('3', 'S')), 'Stand')
+        # Free hand: stiff hands stand vs dealer bust cards (was Hit)
+        self.assertEqual(fb.get_action(hand('10', '6'), Card('6', 'S'), is_free_hand=True), 'Stand')
+        self.assertEqual(fb.get_action(hand('10', '8'), Card('10', 'S'), is_free_hand=True), 'Stand')
+
 if __name__ == '__main__':
     unittest.main()
