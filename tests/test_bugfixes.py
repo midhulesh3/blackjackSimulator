@@ -78,6 +78,15 @@ class TestSimulatorBugfixes(unittest.TestCase):
         self.assertEqual(len(hands), 2)
 
 
+    def test_unbalanced_count_true_count_is_unbiased(self):
+        random.seed(0)
+        rules = dict(BASE_RULES, penetration=0.75, bankroll=10 ** 9)
+        sim = Simulator(rules, Strategy(counting_system='KO'), num_simulations=30000)
+        stats = sim.run()
+        mean_tc = sum(r['true_count'] for r in stats['results']) / len(stats['results'])
+        self.assertLess(abs(mean_tc), 0.3)
+
+
 def hand(*ranks):
     from simulator import Simulator as _S
     cards = [Card(r, 'H') for r in ranks]

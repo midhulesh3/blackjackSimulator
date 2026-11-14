@@ -28,10 +28,30 @@ class Simulator:
         self.hands_played = 0
 
     @property
+    def count_imbalance(self):
+        """Sum of the counting system's tags over one 52-card deck (0 for balanced counts
+        like Hi-Lo, +4 for KO). Cached per strategy."""
+        if not hasattr(self, '_count_imbalance'):
+            ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
+            self._count_imbalance = 4 * sum(self.strategy.get_count_value(Card(r, '')) for r in ranks)
+        return self._count_imbalance
+
+    @property
     def true_count(self):
         if not hasattr(self, 'deck') or not self.deck: return 0
         rem = self.deck.decks_remaining
-        return self.running_count / rem if rem > 0 else 0
+        if rem <= 0:
+            return 0
+        rc = self.running_count
+        # Unbalanced counts (KO, unbalanced Custom) drift by `imbalance` per deck dealt even
+        # in a neutral shoe. Remove that expected drift before converting to a true count,
+        # otherwise the TC climbs steadily through every shoe and the bettor over-bets.
+        imbalance = self.count_imbalance
+        num_decks = getattr(self.deck, 'num_decks', None)
+        if imbalance and num_decks:
+            decks_dealt = num_decks - len(self.deck.cards) / 52.0
+            rc -= imbalance * decks_dealt
+        return rc / rem
 
     def update_count(self, card):
         val = self.strategy.get_count_value(card)
