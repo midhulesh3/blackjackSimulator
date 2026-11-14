@@ -12,16 +12,9 @@ from strategy import Strategy
 st.set_page_config(page_title="Blackjack Simulator", layout="wide")
 
 import time
-import json
-import pandas as pd
-import numpy as np
-import plotly.express as px
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from card import Card
-from deck import Deck
-from strategy import Strategy
-from simulator import Simulator, run_single_session_batch
+from simulator import run_single_session_batch
 st.markdown("Analyze strategies, counting systems, and risk metrics.")
 
 # Sidebar Controls
@@ -32,8 +25,8 @@ if sim_mode == "Single Session":
     num_simulations = st.sidebar.slider("Number of Hands", min_value=1000, max_value=500000, value=10000, step=1000)
     num_sessions = 1
 else:
-    num_sessions = st.sidebar.number_input("Number of Sessions", value=100, step=10)
-    num_simulations = st.sidebar.number_input("Hands per Session", value=1000, step=1000)
+    num_sessions = int(st.sidebar.number_input("Number of Sessions", value=100, step=10, min_value=1))
+    num_simulations = int(st.sidebar.number_input("Hands per Session", value=1000, step=1000, min_value=1))
 
 bankroll = st.sidebar.number_input("Initial Bankroll ($)", value=10000, step=1000)
 stop_on_ruin = st.sidebar.checkbox("Stop on Ruin (Bankroll <= 0)", value=True)
@@ -118,7 +111,7 @@ elif betting_strategy == "Custom":
 
 # Helper for benchmarking speed
 @st.cache_data(show_spinner=False)
-def measure_speed(_rules, _strategy_params):
+def measure_speed(rules, strategy_params):
     # Run a small silent sim to gauge speed
     # _arguments to prevent hashing issues if dict order varies? Streamlit handles dicts well.
     sample_size = 5000
@@ -126,14 +119,14 @@ def measure_speed(_rules, _strategy_params):
     
     # Run locally
     strat = Strategy(
-        check_deviations=_strategy_params.get('check_deviations', False),
-        counting_system=_strategy_params.get('counting_system', None),
-        counting_params=_strategy_params.get('counting_params', {}),
-        variant=_strategy_params.get('variant', 'Standard'),
-        dealer_hits_soft_17=_rules.get('dealer_hits_soft_17', False),
-        surrender_allowed=_rules.get('surrender_allowed', False)
+        check_deviations=strategy_params.get('check_deviations', False),
+        counting_system=strategy_params.get('counting_system', None),
+        counting_params=strategy_params.get('counting_params', {}),
+        variant=strategy_params.get('variant', 'Standard'),
+        dealer_hits_soft_17=rules.get('dealer_hits_soft_17', False),
+        surrender_allowed=rules.get('surrender_allowed', False)
     )
-    sim = Simulator(_rules, strat, num_simulations=sample_size)
+    sim = Simulator(rules, strat, num_simulations=sample_size)
     sim.run()
     
     elapsed = time.time() - start
@@ -163,6 +156,13 @@ def df_to_strategy(df, index_dtype=int):
         key = int(idx) if index_dtype == int else str(idx)
         strat_dict[key] = row.tolist()
     return strat_dict
+
+def set_strategy_tables(hard_df, soft_df, pair_df):
+    """Replace the strategy tables shown in the editor (resets editor widget state)."""
+    for name, df in (('hard', hard_df), ('soft', soft_df), ('pair', pair_df)):
+        st.session_state[f'{name}_base'] = df
+        st.session_state[f'{name}_df'] = df
+    st.session_state['strat_version'] = st.session_state.get('strat_version', 0) + 1
 
 # ... Sidebar Setup ...
 
@@ -255,7 +255,9 @@ if st.button("Run Simulation"):
             # Metrics Row 2
             colA, colB, colC, colD = st.columns(4)
             roi = (stats['total_pnl'] / stats['total_wagered']) * 100 if stats['total_wagered'] > 0 else 0.0
-            colA.metric("Win Rate", f"{(stats['wins']/num_simulations)*100:.1f}%")
+            hands_resolved = stats['wins'] + stats['losses'] + stats['pushes']
+            win_rate = (stats['wins'] / hands_resolved) * 100 if hands_resolved > 0 else 0.0
+            colA.metric("Win Rate", f"{win_rate:.1f}%")
             colB.metric("ROI", f"{roi:.2f}%")
             # Normalized EV for $100 bet: (PnL / Wagered) * 100 = ROI. 
             # User wants "EV per hand... normalized for $100".
@@ -280,12 +282,12 @@ if st.button("Run Simulation"):
                 display_hist = history
                 x_vals = range(len(history))
             fig_equity = px.line(x=x_vals, y=display_hist, labels={'x': 'Hand', 'y': 'Bankroll'})
-            st.plotly_chart(fig_equity, use_container_width=True)
+            st.plotly_chart(fig_equity, width="stretch")
             
             results_df = pd.DataFrame(stats['results'])
             st.subheader("Distribution of Returns")
             fig_dist = px.histogram(results_df, x="pnl", nbins=50, title="PnL Distribution")
-            st.plotly_chart(fig_dist, use_container_width=True)
+            st.plotly_chart(fig_dist, width="stretch")
             
             if counting_system != "None":
                 st.subheader("Performance by True Count")
@@ -294,7 +296,7 @@ if st.button("Run Simulation"):
                 tc_stats = results_df.groupby('TC_Rounded')['pnl'].mean().reset_index()
                 tc_counts = results_df.groupby('TC_Rounded').size().reset_index(name='count')
                 fig_tc = px.bar(tc_stats, x='TC_Rounded', y='pnl', title="Average PnL per Hand by True Count")
-                st.plotly_chart(fig_tc, use_container_width=True)
+                st.plotly_chart(fig_tc, width="stretch")
 
         else: # Batch Mode
 
@@ -367,11 +369,11 @@ if st.button("Run Simulation"):
             # Line chart of Session PnL
             fig_trend = px.line(y=session_pnls, labels={'x': 'Session', 'y': 'Profit/Loss'}, title="PnL per Session")
             fig_trend.add_hline(y=0, line_dash="dash", line_color="red")
-            st.plotly_chart(fig_trend, use_container_width=True)
+            st.plotly_chart(fig_trend, width="stretch")
             
             st.subheader("Session Profit/Loss Distribution")
             fig_batch = px.histogram(x=s_pnls, nbins=30, labels={'x': 'Total PnL'}, title="Distribution of Session PnL")
-            st.plotly_chart(fig_batch, use_container_width=True)
+            st.plotly_chart(fig_batch, width="stretch")
             
             st.subheader("Aggregate Stats")
             c1, c2 = st.columns(2)
@@ -415,9 +417,9 @@ with st.expander("View / Edit Strategy Tables", expanded=False):
             dealer_hits_soft_17=(dealer_s17 == "Hit"),
             surrender_allowed=surrender_allowed
         )
-        st.session_state['hard_df'] = strategy_to_df(default_strat.hard_strategy, int)
-        st.session_state['soft_df'] = strategy_to_df(default_strat.soft_strategy, int)
-        st.session_state['pair_df'] = strategy_to_df(default_strat.pair_strategy, str)
+        set_strategy_tables(strategy_to_df(default_strat.hard_strategy, int),
+                            strategy_to_df(default_strat.soft_strategy, int),
+                            strategy_to_df(default_strat.pair_strategy, str))
     
     # Reset Button
     col_r, col_d, col_u = st.columns([1, 1, 2])
@@ -438,21 +440,28 @@ with st.expander("View / Edit Strategy Tables", expanded=False):
     uploaded_file = col_u.file_uploader("Load Strategy (JSON)", type=['json'], label_visibility='collapsed')
     if uploaded_file is not None:
         try:
-            loaded_data = json.load(uploaded_file)
-            st.session_state['hard_df'] = strategy_to_df(loaded_data.get('hard', {}), int)
-            st.session_state['soft_df'] = strategy_to_df(loaded_data.get('soft', {}), int)
-            st.session_state['pair_df'] = strategy_to_df(loaded_data.get('pair', {}), str)
-            st.success("Strategy Loaded!")
+            # The uploader keeps its file across reruns; only apply each upload once,
+            # otherwise every rerun would overwrite the user's later edits.
+            if st.session_state.get('loaded_upload_id') != uploaded_file.file_id:
+                loaded_data = json.load(uploaded_file)
+                set_strategy_tables(strategy_to_df(loaded_data.get('hard', {}), int),
+                                    strategy_to_df(loaded_data.get('soft', {}), int),
+                                    strategy_to_df(loaded_data.get('pair', {}), str))
+                st.session_state['loaded_upload_id'] = uploaded_file.file_id
+                st.success("Strategy Loaded!")
         except Exception as e:
             st.error(f"Error loading file: {e}")
 
     # Editors
     st.subheader("Hard Totals")
-    st.session_state['hard_df'] = st.data_editor(st.session_state['hard_df'], use_container_width=True, height=400)
+    # Feed the editor a stable base DataFrame. Passing back its own output each rerun
+    # makes Streamlit treat it as new data and drop in-progress edits.
+    ver = st.session_state['strat_version']
+    st.session_state['hard_df'] = st.data_editor(st.session_state['hard_base'], width="stretch", height=400, key=f"hard_editor_{ver}")
     
     st.subheader("Soft Totals")
-    st.session_state['soft_df'] = st.data_editor(st.session_state['soft_df'], use_container_width=True)
+    st.session_state['soft_df'] = st.data_editor(st.session_state['soft_base'], width="stretch", key=f"soft_editor_{ver}")
     
     st.subheader("Pairs")
-    st.session_state['pair_df'] = st.data_editor(st.session_state['pair_df'], use_container_width=True)
+    st.session_state['pair_df'] = st.data_editor(st.session_state['pair_base'], width="stretch", key=f"pair_editor_{ver}")
 
