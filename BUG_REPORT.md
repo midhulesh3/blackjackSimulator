@@ -119,5 +119,7 @@ Conclusions:
   0.01% in S17/H17 and 0.10% in Free Bet (now fixed); (c) the cut-card effect, about 0.02% and not resolvable
   at this sample size; (d) deck count: infinite deck is about 0.07–0.08% worse than 6 decks, so
   infinite-deck figures should not be compared with 6-deck benchmarks.
-- `tests/test_system_ev.py` uses 50k hands with a ±1.0% tolerance, so it cannot detect errors smaller than
-  ~0.5%. A deterministic exact-EV regression test would be a much stronger check.
+- `tests/test_system_ev.py` used 50k hands with a ±1.0% tolerance: it could not detect errors under ~1% and
+  failed at random ~5% of the time. **Replaced** with exact-calculator checks (`exact_ev.py`): pinned exact EVs,
+  published rule effects, and a seeded infinite-deck simulation within 4σ of exact. Mutation-tested: a single
+  strategy cell, 6:5 blackjack, full-loss surrender and missing push-22 are each caught.
