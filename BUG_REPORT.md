@@ -13,6 +13,7 @@ comes with a regression test in `tests/test_bugfixes.py` (15 new tests; suite is
 | `e091a46` | Strategy / basic-strategy table fixes (#7–#11) |
 | `6060b83` | Streamlit app fixes (#12–#17) |
 | `09b9583` | True count for unbalanced counts (#18) |
+| `7679d58` | Basic-strategy audit fixes (#19–#22) |
 
 ## Bugs found and fixed
 
@@ -64,7 +65,59 @@ comes with a regression test in `tests/test_bugfixes.py` (15 new tests; suite is
 
 ## Known limitations (not changed)
 
-- **No non-DAS pair table.** `pair.csv` assumes DAS; with DAS off, splits of 2s/3s/4s/6s are slightly wrong.
 - **Hi-Lo indices for every count.** Index plays and the insurance index (+3) are Hi-Lo values but are applied to whatever count is selected; insurance is only ever taken with Hi-Lo.
 - **Ruin edge case.** With stop-on-ruin, a bankroll between $0 and $1 (from 3:2 or surrender halves) can't place a bet; the loop keeps advancing without playing instead of declaring ruin.
 - **Stale root-level copies.** `test_*.py` in the repo root are older script-style copies of `tests/`, and `debug_*.py` are scratch scripts; CI only runs `tests/`.
+
+## Basic-strategy audit and EV discrepancy (follow-up)
+
+### How the strategy was verified
+
+1. **Against published charts.** Every cell of `hard*.csv`, `soft*.csv` and `pair*.csv` was checked
+   against the Wizard of Odds 4–8 deck strategy (S17, plus its H17 modifications, DAS and late surrender).
+2. **Against a first-principles solver.** A separate 6-deck solver computes the EV of every action for every
+   2-card hand vs every upcard. The three starting cards are removed from the shoe, and the dealer's play is
+   computed exactly with no dealer blackjack (peek). Each table cell is the frequency-weighted average over
+   all 2-card hands with that total. The solver reproduces the published S17 and H17 charts exactly, which
+   validates it. I then used it to check the Free Bet tables, which are only published as images.
+
+### Strategy bugs found (`7679d58`)
+
+| # | Table | Bug | Fix |
+|---|---|---|---|
+| 19 | H17 pairs | 8,8 vs A should surrender when allowed. There was one pair table for both games and no pair-surrender code. | `pair_h17.csv` plus an `Rp` code (surrender, otherwise split). |
+| 20 | Pairs, DAS off | Only the DAS pair table existed, and `Strategy` never received the `das` rule. | `Strategy(das=...)` applies the published no-DAS rules (2s/3s vs 4–7, never 4s, 6s vs 3–6); the app and batch runner pass it. |
+| 21 | Free Bet, paid hands | Hard 13 vs 3 should stand; soft 16 vs 6 and soft 17 vs 5 should double. Soft 18 vs 5–6 was `D`, so a 3-card soft 18 **hit** instead of standing. | Table regenerated from the solver. |
+| 22 | Free Bet, free hands | The table was far too aggressive: it hit 12–16 vs 2–6, 17 vs 10 and 18 vs 9–A. On a free hand a push is worth the same as a loss, so the right goal is to maximize P(win). Standing 16 vs 6 wins whenever the dealer busts (other than on 22). Example: free-hand 17 vs 10, P(win) stand 0.173 vs hit 0.165. | Table regenerated (P(win)-maximizing strategy). An existing test asserted the old heuristic and was updated. |
+
+Exact EV impact (infinite deck): Free Bet improves from −1.093% to −0.995% (~0.10%). The H17 8,8 fix is
+worth +0.0007%, and the earlier S17/H17 cell fixes (#11) are worth +0.009% / +0.006%.
+
+### Where the EV "discrepancy" came from
+
+The `test_system_ev` numbers (e.g. −0.28% / −0.93% at 50k hands, −0.447% at 5M) are **mostly sampling
+noise**. One hand has a standard deviation of about 1.15 bets, so 50k hands give ±0.16% (1σ) and 5M give ±0.05%.
+
+Measured with 280M simulated hands (pre-#19–#22 tables, 6D, DAS, LS, no RSA, flat bet):
+
+| Configuration | Simulator | Independent exact calc | Δ (in SE) |
+|---|---|---|---|
+| Infinite deck, S17 | −0.437% ± 0.018 | −0.427% | 0.6σ ✔ |
+| Infinite deck, H17 | −0.614% ± 0.018 | −0.631% | 0.9σ ✔ |
+| Infinite deck, Free Bet | −1.098% ± 0.017 | −1.093% | 0.3σ ✔ |
+| 6 decks, cut card 75%, S17 | **−0.358% ± 0.018** | (published ≈ 0.35–0.36%) | ✔ |
+| 6 decks, cut card 75%, H17 | **−0.556% ± 0.018** | (published ≈ 0.55–0.57%) | ✔ |
+| 6 decks, CSM, S17 / H17 | −0.333% / −0.588% (± 0.026) | | |
+| 6 decks, cut card, Free Bet | −1.020% ± 0.017 | (published 1.04%, Wizard of Odds) | ✔ |
+
+Conclusions:
+- **The simulator engine is correct.** With an infinite deck it matches an independently written exact
+  calculator within 1σ for S17, H17 and Free Bet (exact recursion including splits to 4 hands in the
+  simulator's order).
+- **The 6-deck results match published house edges** for S17, H17 and Free Bet.
+- **Contributions to the gap:** (a) sampling noise, by far the largest; (b) the strategy-table errors, about
+  0.01% in S17/H17 and 0.10% in Free Bet (now fixed); (c) the cut-card effect, about 0.02% and not resolvable
+  at this sample size; (d) deck count: infinite deck is about 0.07–0.08% worse than 6 decks, so
+  infinite-deck figures should not be compared with 6-deck benchmarks.
+- `tests/test_system_ev.py` uses 50k hands with a ±1.0% tolerance, so it cannot detect errors smaller than
+  ~0.5%. A deterministic exact-EV regression test would be a much stronger check.
