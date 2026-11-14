@@ -1,0 +1,176 @@
+"""Regression tests for bugs found during the bug-hunt pass (see BUG_REPORT.md)."""
+import random
+import unittest
+
+from card import Card
+from simulator import Simulator
+from strategy import Strategy
+from tests.mocks.deck_mock import MockDeck
+
+BASE_RULES = {'decks': 6, 'min_bet': 10, 'bankroll': 1000, 'das': True, 'max_hands': 4}
+FREEBET_RULES = dict(BASE_RULES, dealer_hits_soft_17=True, resplit_aces=True)
+
+
+def play_turn(sim, cards, dealer_up):
+    sim.deck = MockDeck(cards)
+    hand = {'cards': [sim.deal_card(), sim.deal_card()], 'bet': 10, 'base_bet': 10}
+    return sim.process_player_turn(hand, Card(dealer_up, 'S'))
+
+
+class TestSimulatorBugfixes(unittest.TestCase):
+    def test_blackjack_round_recorded_in_bankroll_history(self):
+        sim = Simulator(dict(BASE_RULES), Strategy())
+        sim.setup_simulation()
+        sim.deck = MockDeck([('A', 'C'), ('K', 'D'), ('6', 'H'), ('10', 'S')])
+        sim.play_round()
+        self.assertEqual(sim.bankroll_history, [1000, 1015.0])
+
+    def test_custom_bet_map_float_keys(self):
+        rules = dict(BASE_RULES, betting_strategy='Custom', custom_bet_map={"1.0": 2, "3": 4})
+        sim = Simulator(rules, Strategy())
+        sim.setup_simulation()
+        sim.running_count = 0
+        self.assertEqual(sim.calculate_bet(), 10)
+        sim.running_count = 6 * 1.5  # TC 1.5
+        self.assertEqual(sim.calculate_bet(), 20)
+        sim.running_count = 6 * 3  # TC 3
+        self.assertEqual(sim.calculate_bet(), 40)
+
+    def test_shoe_exhaustion_does_not_crash(self):
+        random.seed(1)
+        rules = dict(BASE_RULES, decks=1, penetration=0.95, bankroll=10 ** 9)
+        sim = Simulator(rules, Strategy(), num_simulations=20000)
+        stats = sim.run()
+        self.assertEqual(len(stats['results']), 20000)
+
+    def test_split_aces_stand_when_resplit_blocked_by_max_hands(self):
+        sim = Simulator(dict(BASE_RULES, resplit_aces=True, max_hands=2), Strategy())
+        sim.setup_simulation()
+        hands = play_turn(sim, [('A', 'C'), ('A', 'D'), ('A', 'H'), ('5', 'S'), ('3', 'C')], '6')
+        self.assertEqual([len(h['cards']) for h in hands], [2, 2])
+
+    def test_freebet_resplit_of_free_hand_keeps_stake(self):
+        sim = Simulator(dict(FREEBET_RULES), Strategy(variant='FreeBet'))
+        sim.setup_simulation()
+        # 8,8 vs 6 -> free split. H1 gets 10 (18), H2 gets 8 (8,8 free hand) -> resplit.
+        hands = play_turn(sim, [('8', 'C'), ('8', 'D'), ('10', 'S'), ('8', 'H'),
+                                ('10', 'C'), ('10', 'H')], '6')
+        self.assertEqual(len(hands), 3)
+        free_hands = [h for h in hands if h['bet'] == 0]
+        self.assertEqual(len(free_hands), 2)
+        for h in free_hands:
+            self.assertEqual(h['free_bet'], 10)
+
+    def test_freebet_free_double_on_free_hand_adds_stake(self):
+        sim = Simulator(dict(FREEBET_RULES), Strategy(variant='FreeBet'))
+        sim.setup_simulation()
+        # 4,4 vs 6 -> free split. H1: 4+10=14 stand. H2: 4+7=11 (free hand) -> free double.
+        hands = play_turn(sim, [('4', 'C'), ('4', 'D'), ('10', 'S'), ('7', 'C'), ('10', 'H')], '6')
+        free_hand = [h for h in hands if h['bet'] == 0][0]
+        self.assertEqual(len(free_hand['cards']), 3)
+        self.assertEqual(free_hand['free_bet'], 20)
+
+    def test_stop_on_ruin_allows_free_split_without_funds(self):
+        rules = dict(FREEBET_RULES, bankroll=10, stop_on_ruin=True)
+        sim = Simulator(rules, Strategy(variant='FreeBet'))
+        sim.setup_simulation()
+        hands = play_turn(sim, [('8', 'C'), ('8', 'D'), ('10', 'S'), ('10', 'H')], '6')
+        self.assertEqual(len(hands), 2)
+
+
+    def test_unbalanced_count_true_count_is_unbiased(self):
+        random.seed(0)
+        rules = dict(BASE_RULES, penetration=0.75, bankroll=10 ** 9)
+        sim = Simulator(rules, Strategy(counting_system='KO'), num_simulations=30000)
+        stats = sim.run()
+        mean_tc = sum(r['true_count'] for r in stats['results']) / len(stats['results'])
+        self.assertLess(abs(mean_tc), 0.3)
+
+
+def hand(*ranks):
+    from simulator import Simulator as _S
+    cards = [Card(r, 'H') for r in ranks]
+    h = _S.calculate_hand_value(None, cards)
+    h['cards'] = cards
+    return h
+
+
+class TestStrategyBugfixes(unittest.TestCase):
+    def setUp(self):
+        self.dev = Strategy(check_deviations=True, counting_system='Hi-Lo', surrender_allowed=True)
+
+    def test_deviation_does_not_override_pair_split(self):
+        self.assertEqual(self.dev.get_action(hand('8', '8'), Card('10', 'S'), 0, can_split=True), 'Split')
+        self.assertEqual(self.dev.get_action(hand('8', '8'), Card('A', 'S'), 0, can_split=True), 'Split')
+        self.assertEqual(self.dev.get_action(hand('6', '6'), Card('3', 'S'), 0, can_split=True), 'Split')
+
+    def test_deviation_does_not_override_surrender(self):
+        self.assertEqual(self.dev.get_action(hand('10', '6'), Card('10', 'S'), -1, can_surrender=True), 'Surrender')
+        # Without surrender the I18 play still applies
+        self.assertEqual(self.dev.get_action(hand('10', '6'), Card('10', 'S'), 1), 'Stand')
+
+    def test_s17_index_plays(self):
+        s17 = Strategy(check_deviations=True, counting_system='Hi-Lo')
+        h17 = Strategy(check_deviations=True, counting_system='Hi-Lo', dealer_hits_soft_17=True)
+        # A,8 vs 6: S17 doubles at +1; below index stand
+        self.assertEqual(s17.get_action(hand('A', '8'), Card('6', 'S'), 1, can_double=True), 'Double')
+        self.assertEqual(s17.get_action(hand('A', '8'), Card('6', 'S'), 0, can_double=True), 'Stand')
+        self.assertEqual(h17.get_action(hand('A', '8'), Card('6', 'S'), 0, can_double=True), 'Double')
+        # A,7 vs A (S17): hit by default, stand at +1
+        self.assertEqual(s17.get_action(hand('A', '7'), Card('A', 'S'), 0), 'Hit')
+        self.assertEqual(s17.get_action(hand('A', '7'), Card('A', 'S'), 1), 'Stand')
+
+    def test_s17_basic_strategy_cells(self):
+        s17 = Strategy()
+        h17 = Strategy(dealer_hits_soft_17=True, surrender_allowed=True)
+        self.assertEqual(s17.get_action(hand('6', '5'), Card('A', 'S'), can_double=True), 'Hit')
+        self.assertEqual(h17.get_action(hand('6', '5'), Card('A', 'S'), can_double=True), 'Double')
+        self.assertEqual(s17.get_action(hand('A', '7'), Card('2', 'S'), can_double=True), 'Stand')
+        self.assertEqual(h17.get_action(hand('A', '7'), Card('2', 'S'), can_double=True), 'Double')
+        self.assertEqual(h17.get_action(hand('10', '7'), Card('A', 'S'), can_surrender=True), 'Surrender')
+
+    def test_strategy_loads_independent_of_cwd(self):
+        import os, tempfile
+        cwd = os.getcwd()
+        try:
+            os.chdir(tempfile.gettempdir())
+            self.assertEqual(len(Strategy().hard_strategy), 18)
+        finally:
+            os.chdir(cwd)
+
+    def test_freebet_custom_tables_keep_freehand_tables(self):
+        s = Strategy(variant='FreeBet', custom_tables={'hard': {}, 'soft': {}, 'pair': {}})
+        self.assertTrue(s.freehand_hard)
+        self.assertTrue(s.freehand_soft)
+
+
+    def test_h17_pair_eights_vs_ace_surrenders(self):
+        h17 = Strategy(dealer_hits_soft_17=True, surrender_allowed=True)
+        self.assertEqual(h17.get_action(hand('8', '8'), Card('A', 'S'), can_split=True, can_surrender=True), 'Surrender')
+        # Without surrender available (e.g. after a split) it still splits
+        self.assertEqual(h17.get_action(hand('8', '8'), Card('A', 'S'), can_split=True), 'Split')
+        # S17 always splits
+        s17 = Strategy(surrender_allowed=True)
+        self.assertEqual(s17.get_action(hand('8', '8'), Card('A', 'S'), can_split=True, can_surrender=True), 'Split')
+
+    def test_no_das_pair_strategy(self):
+        nodas = Strategy(das=False)
+        das = Strategy()
+        self.assertEqual(das.get_action(hand('4', '4'), Card('5', 'S'), can_split=True, can_double=True), 'Split')
+        self.assertEqual(nodas.get_action(hand('4', '4'), Card('5', 'S'), can_split=True, can_double=True), 'Hit')  # hard 8
+        self.assertEqual(das.get_action(hand('2', '2'), Card('2', 'S'), can_split=True), 'Split')
+        self.assertEqual(nodas.get_action(hand('2', '2'), Card('2', 'S'), can_split=True), 'Hit')
+        self.assertEqual(nodas.get_action(hand('6', '6'), Card('2', 'S'), can_split=True), 'Hit')
+        self.assertEqual(nodas.get_action(hand('6', '6'), Card('3', 'S'), can_split=True), 'Split')
+
+    def test_freebet_tables_match_derived_strategy(self):
+        fb = Strategy(variant='FreeBet', dealer_hits_soft_17=True)
+        # Paid hand: 3-card soft 18 vs 5 can't double -> Stand (was 'D' -> Hit)
+        self.assertEqual(fb.get_action(hand('A', '3', '4'), Card('5', 'S')), 'Stand')
+        self.assertEqual(fb.get_action(hand('10', '3'), Card('3', 'S')), 'Stand')
+        # Free hand: stiff hands stand vs dealer bust cards (was Hit)
+        self.assertEqual(fb.get_action(hand('10', '6'), Card('6', 'S'), is_free_hand=True), 'Stand')
+        self.assertEqual(fb.get_action(hand('10', '8'), Card('10', 'S'), is_free_hand=True), 'Stand')
+
+if __name__ == '__main__':
+    unittest.main()

@@ -11,7 +11,7 @@ print(f"  Hard 12 vs 3: {strategy.hard_strategy.get(12, ['?']*10)[1]}")   # Shou
 print(f"  Hard 9 vs 3: {strategy.hard_strategy.get(9, ['?']*10)[1]}")     # Should be Dh
 
 print("\nSoft Strategy (sample):")
-print(f"  Soft 18 vs 2: {strategy.soft_strategy.get(18, ['?']*10)[0]}")   # Should be Ds
+print(f"  Soft 18 vs 2: {strategy.soft_strategy.get(18, ['?']*10)[0]}")   # S17: S (H17 table: Ds)
 print(f"  Soft 17 vs 2: {strategy.soft_strategy.get(17, ['?']*10)[0]}")   # Should be H
 
 print("\nPair Strategy (sample):")  

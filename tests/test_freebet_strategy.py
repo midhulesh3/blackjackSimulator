@@ -83,9 +83,14 @@ class TestFreeBetStrategy(unittest.TestCase):
         action_paid = strat.get_action(hand_h17, dealer_10, is_free_hand=False)
         self.assertEqual(action_paid, 'Stand', "Paid 17 vs 10 should Stand")
         
-        # Free Hand: Hit (Aggressive)
+        # Free Hand: a push is worth the same as a loss, so maximize P(win).
+        # P(win) computed exactly (infinite deck, H17, push 22):
+        #   17 vs 9: stand 0.172, hit 0.181 -> Hit
+        #   17 vs 10: stand 0.173, hit 0.165 -> Stand (dealer makes 20 too often)
+        action_free_9 = strat.get_action(hand_h17, Card('9', 'C'), is_free_hand=True)
+        self.assertEqual(action_free_9, 'Hit', "Free Hand 17 vs 9 should Hit (Aggressive)")
         action_free = strat.get_action(hand_h17, dealer_10, is_free_hand=True)
-        self.assertEqual(action_free, 'Hit', "Free Hand 17 vs 10 should Hit (Aggressive)")
+        self.assertEqual(action_free, 'Stand', "Free Hand 17 vs 10 should Stand")
         
         # Hard 17 vs 6: Still Stand? (Dealer bust likely)
         dealer_6 = Card('6', 'D')

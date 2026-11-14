@@ -1,43 +1,90 @@
+import os
+
 import pandas as pd
 
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 class Strategy:
-    def __init__(self, check_deviations=False, counting_system=None, counting_params=None, variant='Standard', dealer_hits_soft_17=False, surrender_allowed=False):
+    def __init__(self, check_deviations=False, counting_system=None, counting_params=None, variant='Standard', dealer_hits_soft_17=False, surrender_allowed=False, custom_tables=None, das=True):
         self.check_deviations = check_deviations
         self.counting_system = counting_system # 'Hi-Lo', 'KO', 'Custom'
         self.counting_params = counting_params or {} # Dictionary for custom values
         self.variant = variant # 'Standard' or 'FreeBet'
         self.dealer_hits_soft_17 = dealer_hits_soft_17
         self.surrender_allowed = surrender_allowed
+        self.das = das
         
-        # Determine suffixes
-        suffix = "_h17" if dealer_hits_soft_17 else ""
-        if self.variant == 'FreeBet':
-             # Use specific FreeBet files
-             self.hard_strategy = self.load_strategy_csv('strategies/freebet_hard.csv', index_col=0, dtype_idx=int)
-             self.soft_strategy = self.load_strategy_csv('strategies/freebet_soft.csv', index_col=0, dtype_idx=int)
-             self.pair_strategy = self.load_strategy_csv('strategies/freebet_pair.csv', index_col=0, dtype_idx=str)
-             
-             # Free Hand Specials (Aggressive)
-             self.freehand_hard = self.load_strategy_csv('strategies/freebet_freehand_hard.csv', index_col=0, dtype_idx=int)
-             self.freehand_soft = self.load_strategy_csv('strategies/freebet_freehand_soft.csv', index_col=0, dtype_idx=int)
+        self.hard_strategy = {}
+        self.soft_strategy = {}
+        self.pair_strategy = {}
+        
+        if custom_tables:
+            # Use provided custom tables
+            self.hard_strategy = custom_tables.get('hard', {})
+            self.soft_strategy = custom_tables.get('soft', {})
+            self.pair_strategy = custom_tables.get('pair', {})
+            # Support aggressive freehand overrides if provided
+            if 'freehand_hard' in custom_tables:
+                self.freehand_hard = custom_tables['freehand_hard']
+            if 'freehand_soft' in custom_tables:
+                self.freehand_soft = custom_tables['freehand_soft']
+            # The editor only edits hard/soft/pair; keep the default Free Bet
+            # free-hand tables so Free Bet sims don't silently lose them.
+            if self.variant == 'FreeBet':
+                if not hasattr(self, 'freehand_hard'):
+                    self.freehand_hard = self.load_strategy_csv('strategies/freebet_freehand_hard.csv', index_col=0, dtype_idx=int)
+                if not hasattr(self, 'freehand_soft'):
+                    self.freehand_soft = self.load_strategy_csv('strategies/freebet_freehand_soft.csv', index_col=0, dtype_idx=int)
         else:
-            # Load Standard Strategies
-            try:
-                self.hard_strategy = self.load_strategy_csv(f'strategies/hard{suffix}.csv', index_col=0, dtype_idx=int)
-                if not self.hard_strategy: raise FileNotFoundError 
-            except:
-                 self.hard_strategy = self.load_strategy_csv('strategies/hard.csv', index_col=0, dtype_idx=int)
+            # Determine suffixes
+            suffix = "_h17" if dealer_hits_soft_17 else ""
+            if self.variant == 'FreeBet':
+                 # Use specific FreeBet files
+                 self.hard_strategy = self.load_strategy_csv('strategies/freebet_hard.csv', index_col=0, dtype_idx=int)
+                 self.soft_strategy = self.load_strategy_csv('strategies/freebet_soft.csv', index_col=0, dtype_idx=int)
+                 self.pair_strategy = self.load_strategy_csv('strategies/freebet_pair.csv', index_col=0, dtype_idx=str)
                  
-            try:
-                self.soft_strategy = self.load_strategy_csv(f'strategies/soft{suffix}.csv', index_col=0, dtype_idx=int)
-                if not self.soft_strategy: 
+                 # Free Hand Specials (Aggressive)
+                 self.freehand_hard = self.load_strategy_csv('strategies/freebet_freehand_hard.csv', index_col=0, dtype_idx=int)
+                 self.freehand_soft = self.load_strategy_csv('strategies/freebet_freehand_soft.csv', index_col=0, dtype_idx=int)
+            else:
+                # Load Standard Strategies
+                try:
+                    self.hard_strategy = self.load_strategy_csv(f'strategies/hard{suffix}.csv', index_col=0, dtype_idx=int)
+                    if not self.hard_strategy: raise FileNotFoundError 
+                except:
+                     self.hard_strategy = self.load_strategy_csv('strategies/hard.csv', index_col=0, dtype_idx=int)
+                     
+                try:
+                    self.soft_strategy = self.load_strategy_csv(f'strategies/soft{suffix}.csv', index_col=0, dtype_idx=int)
+                    if not self.soft_strategy: 
+                         self.soft_strategy = self.load_strategy_csv('strategies/soft.csv', index_col=0, dtype_idx=int)
+                except:
                      self.soft_strategy = self.load_strategy_csv('strategies/soft.csv', index_col=0, dtype_idx=int)
-            except:
-                 self.soft_strategy = self.load_strategy_csv('strategies/soft.csv', index_col=0, dtype_idx=int)
-    
-            self.pair_strategy = self.load_strategy_csv('strategies/pair.csv', index_col=0, dtype_idx=str)
         
+                # H17 differs only in 8,8 vs A (surrender, 'Rp')
+                self.pair_strategy = (self.load_strategy_csv(f'strategies/pair{suffix}.csv', index_col=0, dtype_idx=str)
+                                      or self.load_strategy_csv('strategies/pair.csv', index_col=0, dtype_idx=str))
+                if not das:
+                    self.apply_no_das_pairs()
+        
+    # Published no-DAS pair strategy (4-8 decks): split 2,2/3,3 only vs 4-7,
+    # never split 4,4, split 6,6 only vs 3-6. Columns: 2,3,4,5,6,7,8,9,10,A.
+    NO_DAS_PAIRS = {
+        '2': ['H', 'H', 'P', 'P', 'P', 'P', 'H', 'H', 'H', 'H'],
+        '3': ['H', 'H', 'P', 'P', 'P', 'P', 'H', 'H', 'H', 'H'],
+        '4': ['H'] * 10,
+        '6': ['H', 'P', 'P', 'P', 'P', 'H', 'H', 'H', 'H', 'H'],
+    }
+
+    def apply_no_das_pairs(self):
+        for rank, row in self.NO_DAS_PAIRS.items():
+            self.pair_strategy[rank] = list(row)
+
     def load_strategy_csv(self, filepath, index_col, dtype_idx):
+        # Resolve relative paths against the package dir so loading works from any CWD
+        if not os.path.isabs(filepath) and not os.path.exists(filepath):
+            filepath = os.path.join(_BASE_DIR, filepath)
         try:
             df = pd.read_csv(filepath)
             # Create dict: Key = Index (converted to dtype), Value = List of actions
@@ -118,6 +165,11 @@ class Strategy:
             rank = hand['cards'][0].rank
             if rank in ['J', 'Q', 'K']: rank = '10' # Normalize 10s
             action = self.pair_strategy.get(rank, ['H']*10)[dealer_idx]
+            if action == 'Rp':
+                # Surrender if allowed, otherwise split (H17: 8,8 vs A)
+                if can_surrender and self.surrender_allowed and not is_free_hand:
+                    return 'Surrender'
+                action = 'P'
             if action == 'P': 
                 # If is_free_hand, avoid Paid Splits? 
                 # Free Bet rules usually cover ALMOST ALL splits as Free. 
@@ -195,45 +247,22 @@ class Strategy:
                  if card_val != 10: # Free split
                      return 'Split'
 
-        # Check Deviations first if enabled
-        # Note: Deviations might suggest a Paid Double. 
-        # If is_free_hand, we likely shouldn't take paid deviations either?
-        # Let's assume No Paid Actions for Free Hands generally.
+        basic_action = self.get_basic_action(hand, dealer_card, can_split, can_double, can_surrender,
+                                             is_free_hand=is_free_hand)
+
+        # Index plays (deviations). Total-based Hit/Stand/Double deviations must not
+        # override a basic-strategy Split (e.g. 8,8 vs 10 is "16 vs 10") or Surrender
+        # (e.g. 16 vs 10 with late surrender).
         if self.check_deviations:
             dev_action = self.check_index_plays(hand, dealer_card, true_count, can_split, can_double, can_surrender)
             if dev_action:
-                # If Free Hand, forbid Paid Doubles/Splits/Surrender?
-                # Surrender on Free Hand: You get back... 0? 0 risk -> 0 return. 
-                # Actually you can't surrender a Free Hand (it's free).
-                if is_free_hand:
-                    if dev_action in ['Double', 'Split', 'Surrender']:
-                         # Downgrade logic? Or just ignore deviation?
-                         pass # Fallthrough to basic strategy (which we will also restrict)
-                    else:
-                        return dev_action
-                else:
+                if dev_action in ['Hit', 'Stand', 'Double'] and basic_action in ['Split', 'Surrender']:
+                    return basic_action
+                # Free hands cannot take paid actions (Double, Split, Surrender)
+                if not (is_free_hand and dev_action in ['Double', 'Split', 'Surrender']):
                     return dev_action
-        
-        # Get Basic Action
-        action = self.get_basic_action(hand, dealer_card, can_split, can_double, can_surrender)
-        
-        if is_free_hand and self.variant == 'FreeBet':
-            # Downgrade Paid Doubles/Splits/Surrenders
-            if action == 'Double':
-                 # Determine if D or Ds based on table? 
-                 # `get_basic_action` returns resolved action.
-                 # We need to know if it was D(Hit) or D(Stand).
-                 # Re-lookup or infer?
-                 # Actually, `get_basic_action` resolved it.
-                 # If it was 'Double', it meant 'Double if allowed, else Hit'.
-                 # If it was 'Ds', it meant 'Double if allowed, else Stand'.
-                 # Since we returned 'Double', the engine will Double.
-                 # We want to force Hit/Stand instead.
-                 # We can't differentiate D vs Ds here easily without re-lookup or modification.
-                 # Optimization: Pass is_free_hand to get_basic_action?
-                 pass 
-                 
-        return self.get_basic_action(hand, dealer_card, can_split, can_double, can_surrender, is_free_hand=is_free_hand)
+
+        return basic_action
 
     def check_index_plays(self, hand, dealer_card, true_count, can_split, can_double, can_surrender):
         """
@@ -378,17 +407,17 @@ class Strategy:
         if is_pair and hand['cards'][0].value == 9 and can_split and dealer_card.rank == 'A':
             if true_count >= 3: return 'Split'
         
-        # Soft 19 vs 6 (Index +1) - H17 games
+        # Soft 19 vs 6 (Index +1) - S17 games (H17 basic strategy already doubles)
         if is_soft and total == 19 and d_val == 6:
-            if self.dealer_hits_soft_17 and can_double:
+            if not self.dealer_hits_soft_17 and can_double:
                 if true_count >= 1: return 'Double'
         
         # Soft 18 vs 2 (Index +1)
         if is_soft and total == 18 and d_val == 2:
             if can_double and true_count >= 1: return 'Double'
             
-        # Soft 18 vs A (Index +1)
+        # Soft 18 vs A (Index +1) - S17: stand instead of hit in positive counts
         if is_soft and total == 18 and dealer_card.rank == 'A':
-            if true_count >= 1: return 'Hit'  # Hit instead of stand in positive counts
+            if not self.dealer_hits_soft_17 and true_count >= 1: return 'Stand'
         
         return None 
