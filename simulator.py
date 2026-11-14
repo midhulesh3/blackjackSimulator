@@ -60,11 +60,13 @@ class Simulator:
                 bet = min_bet + additional
                 
         elif bet_strategy == 'Custom':
-            b_map = self.rules.get('custom_bet_map', {})
-            sorted_keys = sorted([float(k) for k in b_map.keys()], reverse=True)
-            for k in sorted_keys:
+            b_map = self.rules.get('custom_bet_map', {}) or {}
+            # Parse keys once into floats (JSON keys are strings such as "1", "1.0", "-2")
+            thresholds = sorted(((float(k), float(v)) for k, v in b_map.items()),
+                                key=lambda kv: kv[0], reverse=True)
+            for k, mult in thresholds:
                 if tc >= k:
-                    bet = min_bet * b_map[str(int(k)) if k.is_integer() else str(k)] 
+                    bet = min_bet * mult
                     break
                     
         return max(min_bet, int(bet))
@@ -82,6 +84,16 @@ class Simulator:
         self.total_wagered = 0
         self.results = []
         
+    def deal_card(self):
+        """Deal a card, reshuffling if the shoe is exhausted mid-round.
+
+        With high penetration and few decks the shoe can run dry in the middle of a
+        round; Deck.deal() would return None and crash later."""
+        if not self.deck.cards:
+            self.deck.shuffle()
+            self.running_count = 0
+        return self.deck.deal()
+
     def check_shuffle(self):
         if self.deck.needs_shuffle:
             self.deck.shuffle()
@@ -131,6 +143,7 @@ class Simulator:
             self.current_bankroll += insurance_pnl
             
         self.total_wagered += bet 
+        self.bankroll_history.append(self.current_bankroll)
         self.record_result(round_pnl, true_count_start, bet)
         
     def play_dealer_hand(self, dealer_hand):
@@ -146,19 +159,28 @@ class Simulator:
                 else:
                     break
             
-            new_card = self.deck.deal()
+            new_card = self.deal_card()
             dealer_hand['cards'].append(new_card)
             self.update_count(new_card)
 
+    @staticmethod
+    def get_base_bet(hand):
+        """Original wager unit for a hand (free hands have bet == 0)."""
+        if 'base_bet' in hand:
+            return hand['base_bet']
+        return hand['bet'] if hand['bet'] > 0 else hand.get('free_bet', 0)
+
     def perform_split(self, current_hand, active_hands, is_split_ace, is_free=False):
         # Create new hand
-        new_bet = 0 if is_free else current_hand['bet']
-        new_free_bet = current_hand['bet'] if is_free else 0
+        unit = self.get_base_bet(current_hand)
+        new_bet = 0 if is_free else unit
+        new_free_bet = unit if is_free else 0
         
         new_hand = {
             'cards': [current_hand['cards'].pop(1)], # Take second card from first hand
             'bet': new_bet,
             'free_bet': new_free_bet,
+            'base_bet': unit,
             'split_group_id': current_hand.get('split_group_id'),
             'is_split_hand': True,
             'from_split_ace': is_split_ace
@@ -167,8 +189,8 @@ class Simulator:
         current_hand['from_split_ace'] = is_split_ace
         
         # Deal cards (Card 2 for Hand 1, Card 2 for Hand 2)
-        c1_new = self.deck.deal()
-        c2_new = self.deck.deal()
+        c1_new = self.deal_card()
+        c2_new = self.deal_card()
         
         current_hand['cards'].append(c1_new)
         new_hand['cards'].append(c2_new)
@@ -238,8 +260,10 @@ class Simulator:
                          can_split = False
                      # Stop on Ruin Check for Split
                      if stop_ruin:
-                         # Split requires equal bet
-                         if available_funds < current_hand['bet']:
+                         # Paid split requires an equal bet; Free Bet splits (non-10 pairs) are free
+                         free_split = (self.strategy.variant == 'FreeBet' and current_hand['cards'][0].value != 10)
+                         split_cost = 0 if free_split else self.get_base_bet(current_hand)
+                         if available_funds < split_cost:
                              can_split = False
                 
                 can_double = (len(current_hand['cards']) == 2)
@@ -249,7 +273,9 @@ class Simulator:
                      can_double = False
                 # Stop on Ruin Check for Double
                 if stop_ruin and can_double:
-                    if available_funds < current_hand['bet']:
+                    free_double = (self.strategy.variant == 'FreeBet' and not hand_info['soft']
+                                   and hand_info['total'] in [9, 10, 11])
+                    if not free_double and available_funds < current_hand['bet']:
                         can_double = False
                      
                 can_surrender = (len(current_hand['cards']) == 2 and 
@@ -263,8 +289,13 @@ class Simulator:
                                                 can_split, can_double, can_surrender,
                                                 is_free_hand=is_free_hand)
                 
+                if is_split_ace and not self.rules.get('hit_split_aces', False) and action != 'Split':
+                    # Split aces receive exactly one card (unless resplit); e.g. A,A when
+                    # resplitting is blocked by max_hands must stand, not hit.
+                    action = 'Stand'
+
                 if action == 'Hit':
-                    new_card = self.deck.deal()
+                    new_card = self.deal_card()
                     current_hand['cards'].append(new_card)
                     self.update_count(new_card)
                 elif action == 'Stand':
@@ -278,11 +309,11 @@ class Simulator:
                              is_free = True
                     
                     if is_free:
-                        current_hand['free_bet'] = current_hand.get('free_bet', 0) + current_hand['bet']
+                        current_hand['free_bet'] = current_hand.get('free_bet', 0) + self.get_base_bet(current_hand)
                     else:
                         current_hand['bet'] *= 2
                         
-                    new_card = self.deck.deal()
+                    new_card = self.deal_card()
                     current_hand['cards'].append(new_card)
                     self.update_count(new_card)
                     current_hand.update(self.calculate_hand_value(current_hand['cards']))
@@ -381,8 +412,8 @@ class Simulator:
                  return # Cannot play with 0
         
         # 2. Deal
-        player_hand = {'cards': [self.deck.deal(), self.deck.deal()], 'bet': bet, 'split_group_id': self.hands_played}
-        dealer_hand = {'cards': [self.deck.deal(), self.deck.deal()]}
+        player_hand = {'cards': [self.deal_card(), self.deal_card()], 'bet': bet, 'base_bet': bet, 'split_group_id': self.hands_played}
+        dealer_hand = {'cards': [self.deal_card(), self.deal_card()]}
         
         # Pre-count updates (visible cards)
         self.update_count(player_hand['cards'][0])
