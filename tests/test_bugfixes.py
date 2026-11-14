@@ -78,5 +78,62 @@ class TestSimulatorBugfixes(unittest.TestCase):
         self.assertEqual(len(hands), 2)
 
 
+def hand(*ranks):
+    from simulator import Simulator as _S
+    cards = [Card(r, 'H') for r in ranks]
+    h = _S.calculate_hand_value(None, cards)
+    h['cards'] = cards
+    return h
+
+
+class TestStrategyBugfixes(unittest.TestCase):
+    def setUp(self):
+        self.dev = Strategy(check_deviations=True, counting_system='Hi-Lo', surrender_allowed=True)
+
+    def test_deviation_does_not_override_pair_split(self):
+        self.assertEqual(self.dev.get_action(hand('8', '8'), Card('10', 'S'), 0, can_split=True), 'Split')
+        self.assertEqual(self.dev.get_action(hand('8', '8'), Card('A', 'S'), 0, can_split=True), 'Split')
+        self.assertEqual(self.dev.get_action(hand('6', '6'), Card('3', 'S'), 0, can_split=True), 'Split')
+
+    def test_deviation_does_not_override_surrender(self):
+        self.assertEqual(self.dev.get_action(hand('10', '6'), Card('10', 'S'), -1, can_surrender=True), 'Surrender')
+        # Without surrender the I18 play still applies
+        self.assertEqual(self.dev.get_action(hand('10', '6'), Card('10', 'S'), 1), 'Stand')
+
+    def test_s17_index_plays(self):
+        s17 = Strategy(check_deviations=True, counting_system='Hi-Lo')
+        h17 = Strategy(check_deviations=True, counting_system='Hi-Lo', dealer_hits_soft_17=True)
+        # A,8 vs 6: S17 doubles at +1; below index stand
+        self.assertEqual(s17.get_action(hand('A', '8'), Card('6', 'S'), 1, can_double=True), 'Double')
+        self.assertEqual(s17.get_action(hand('A', '8'), Card('6', 'S'), 0, can_double=True), 'Stand')
+        self.assertEqual(h17.get_action(hand('A', '8'), Card('6', 'S'), 0, can_double=True), 'Double')
+        # A,7 vs A (S17): hit by default, stand at +1
+        self.assertEqual(s17.get_action(hand('A', '7'), Card('A', 'S'), 0), 'Hit')
+        self.assertEqual(s17.get_action(hand('A', '7'), Card('A', 'S'), 1), 'Stand')
+
+    def test_s17_basic_strategy_cells(self):
+        s17 = Strategy()
+        h17 = Strategy(dealer_hits_soft_17=True, surrender_allowed=True)
+        self.assertEqual(s17.get_action(hand('6', '5'), Card('A', 'S'), can_double=True), 'Hit')
+        self.assertEqual(h17.get_action(hand('6', '5'), Card('A', 'S'), can_double=True), 'Double')
+        self.assertEqual(s17.get_action(hand('A', '7'), Card('2', 'S'), can_double=True), 'Stand')
+        self.assertEqual(h17.get_action(hand('A', '7'), Card('2', 'S'), can_double=True), 'Double')
+        self.assertEqual(h17.get_action(hand('10', '7'), Card('A', 'S'), can_surrender=True), 'Surrender')
+
+    def test_strategy_loads_independent_of_cwd(self):
+        import os, tempfile
+        cwd = os.getcwd()
+        try:
+            os.chdir(tempfile.gettempdir())
+            self.assertEqual(len(Strategy().hard_strategy), 18)
+        finally:
+            os.chdir(cwd)
+
+    def test_freebet_custom_tables_keep_freehand_tables(self):
+        s = Strategy(variant='FreeBet', custom_tables={'hard': {}, 'soft': {}, 'pair': {}})
+        self.assertTrue(s.freehand_hard)
+        self.assertTrue(s.freehand_soft)
+
+
 if __name__ == '__main__':
     unittest.main()

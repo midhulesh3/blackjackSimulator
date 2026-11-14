@@ -1,4 +1,8 @@
+import os
+
 import pandas as pd
+
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 class Strategy:
     def __init__(self, check_deviations=False, counting_system=None, counting_params=None, variant='Standard', dealer_hits_soft_17=False, surrender_allowed=False, custom_tables=None):
@@ -23,6 +27,13 @@ class Strategy:
                 self.freehand_hard = custom_tables['freehand_hard']
             if 'freehand_soft' in custom_tables:
                 self.freehand_soft = custom_tables['freehand_soft']
+            # The editor only edits hard/soft/pair; keep the default Free Bet
+            # free-hand tables so Free Bet sims don't silently lose them.
+            if self.variant == 'FreeBet':
+                if not hasattr(self, 'freehand_hard'):
+                    self.freehand_hard = self.load_strategy_csv('strategies/freebet_freehand_hard.csv', index_col=0, dtype_idx=int)
+                if not hasattr(self, 'freehand_soft'):
+                    self.freehand_soft = self.load_strategy_csv('strategies/freebet_freehand_soft.csv', index_col=0, dtype_idx=int)
         else:
             # Determine suffixes
             suffix = "_h17" if dealer_hits_soft_17 else ""
@@ -53,6 +64,9 @@ class Strategy:
                 self.pair_strategy = self.load_strategy_csv('strategies/pair.csv', index_col=0, dtype_idx=str)
         
     def load_strategy_csv(self, filepath, index_col, dtype_idx):
+        # Resolve relative paths against the package dir so loading works from any CWD
+        if not os.path.isabs(filepath) and not os.path.exists(filepath):
+            filepath = os.path.join(_BASE_DIR, filepath)
         try:
             df = pd.read_csv(filepath)
             # Create dict: Key = Index (converted to dtype), Value = List of actions
@@ -210,45 +224,22 @@ class Strategy:
                  if card_val != 10: # Free split
                      return 'Split'
 
-        # Check Deviations first if enabled
-        # Note: Deviations might suggest a Paid Double. 
-        # If is_free_hand, we likely shouldn't take paid deviations either?
-        # Let's assume No Paid Actions for Free Hands generally.
+        basic_action = self.get_basic_action(hand, dealer_card, can_split, can_double, can_surrender,
+                                             is_free_hand=is_free_hand)
+
+        # Index plays (deviations). Total-based Hit/Stand/Double deviations must not
+        # override a basic-strategy Split (e.g. 8,8 vs 10 is "16 vs 10") or Surrender
+        # (e.g. 16 vs 10 with late surrender).
         if self.check_deviations:
             dev_action = self.check_index_plays(hand, dealer_card, true_count, can_split, can_double, can_surrender)
             if dev_action:
-                # If Free Hand, forbid Paid Doubles/Splits/Surrender?
-                # Surrender on Free Hand: You get back... 0? 0 risk -> 0 return. 
-                # Actually you can't surrender a Free Hand (it's free).
-                if is_free_hand:
-                    if dev_action in ['Double', 'Split', 'Surrender']:
-                         # Downgrade logic? Or just ignore deviation?
-                         pass # Fallthrough to basic strategy (which we will also restrict)
-                    else:
-                        return dev_action
-                else:
+                if dev_action in ['Hit', 'Stand', 'Double'] and basic_action in ['Split', 'Surrender']:
+                    return basic_action
+                # Free hands cannot take paid actions (Double, Split, Surrender)
+                if not (is_free_hand and dev_action in ['Double', 'Split', 'Surrender']):
                     return dev_action
-        
-        # Get Basic Action
-        action = self.get_basic_action(hand, dealer_card, can_split, can_double, can_surrender)
-        
-        if is_free_hand and self.variant == 'FreeBet':
-            # Downgrade Paid Doubles/Splits/Surrenders
-            if action == 'Double':
-                 # Determine if D or Ds based on table? 
-                 # `get_basic_action` returns resolved action.
-                 # We need to know if it was D(Hit) or D(Stand).
-                 # Re-lookup or infer?
-                 # Actually, `get_basic_action` resolved it.
-                 # If it was 'Double', it meant 'Double if allowed, else Hit'.
-                 # If it was 'Ds', it meant 'Double if allowed, else Stand'.
-                 # Since we returned 'Double', the engine will Double.
-                 # We want to force Hit/Stand instead.
-                 # We can't differentiate D vs Ds here easily without re-lookup or modification.
-                 # Optimization: Pass is_free_hand to get_basic_action?
-                 pass 
-                 
-        return self.get_basic_action(hand, dealer_card, can_split, can_double, can_surrender, is_free_hand=is_free_hand)
+
+        return basic_action
 
     def check_index_plays(self, hand, dealer_card, true_count, can_split, can_double, can_surrender):
         """
@@ -393,17 +384,17 @@ class Strategy:
         if is_pair and hand['cards'][0].value == 9 and can_split and dealer_card.rank == 'A':
             if true_count >= 3: return 'Split'
         
-        # Soft 19 vs 6 (Index +1) - H17 games
+        # Soft 19 vs 6 (Index +1) - S17 games (H17 basic strategy already doubles)
         if is_soft and total == 19 and d_val == 6:
-            if self.dealer_hits_soft_17 and can_double:
+            if not self.dealer_hits_soft_17 and can_double:
                 if true_count >= 1: return 'Double'
         
         # Soft 18 vs 2 (Index +1)
         if is_soft and total == 18 and d_val == 2:
             if can_double and true_count >= 1: return 'Double'
             
-        # Soft 18 vs A (Index +1)
+        # Soft 18 vs A (Index +1) - S17: stand instead of hit in positive counts
         if is_soft and total == 18 and dealer_card.rank == 'A':
-            if true_count >= 1: return 'Hit'  # Hit instead of stand in positive counts
+            if not self.dealer_hits_soft_17 and true_count >= 1: return 'Stand'
         
         return None 
